@@ -1,5 +1,6 @@
 using UnityEngine;
 using TMPro;
+using UnityEngine.InputSystem;
 
 public class PlayerInteractor : MonoBehaviour
 {
@@ -9,34 +10,42 @@ public class PlayerInteractor : MonoBehaviour
     [Header("UI")]
     public TextMeshProUGUI promptText;
 
-    private IInteractable _current;
+    private IInteractable current;
 
     void Update()
     {
         DetectInteractable();
 
-        if (_current != null && Input.GetKeyDown(KeyCode.E))
+        if (current != null && Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
         {
-            _current.Interact();
+            current.Interact();
         }
     }
 
     void DetectInteractable()
     {
-        _current = null;
+        current = null;
 
         if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, interactDistance))
         {
+
             var interactable = hit.collider.GetComponentInParent<IInteractable>();
             if (interactable != null)
             {
-                _current = interactable;
-                promptText.text = $"{_current.GetPrompt()} (E)";
-                promptText.enabled = true;
+
+                current = interactable;
+                if (promptText != null)
+                {
+                    promptText.text = $"{current.GetPrompt()} (E)";
+                    promptText.enabled = true;
+                }
                 return;
             }
         }
 
-        promptText.enabled = false;
+        Debug.Log("No Hit!");
+
+        if (promptText != null)
+            promptText.enabled = false;
     }
 }
