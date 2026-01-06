@@ -15,6 +15,18 @@ services:
       timeout: 3s
       retries: 20
 
+  app-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: apppass
+      POSTGRES_DB: animequest
+      POSTGRES_USER: app
+    ports:
+      - "5432:5432"
+    volumes:
+      - app_db_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
   nakama:
     image: heroiclabs/nakama:3.22.0
     depends_on:
