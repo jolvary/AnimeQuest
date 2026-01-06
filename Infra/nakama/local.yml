@@ -1,4 +1,4 @@
-name: "animequest-nakama"
+name: "nakama"
 data_dir: "/nakama/data"
 
 logger:

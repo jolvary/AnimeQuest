@@ -47,3 +47,4 @@ services:
 
 volumes:
   nakama_db_data:
+  app_db_data:
