@@ -1,0 +1,21 @@
+name: "animequest-nakama"
+data_dir: "/nakama/data"
+
+logger:
+  level: "INFO"
+
+database:
+  address:
+    - "nakama:localpass@nakama-db:5432/nakama"
+
+session:
+  token_expiry_sec: 7200
+
+socket:
+  server_key: "devserverkey"
+  port: 7350
+
+console:
+  port: 7351
+  username: "admin"
+  password: "password"

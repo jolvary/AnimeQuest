@@ -1,0 +1,31 @@
+services:
+  nakama-db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: localpass
+      POSTGRES_DB: nakama
+      POSTGRES_USER: nakama
+    ports:
+      - "5433:5432"
+    volumes:
+      - nakama_db_data:/var/lib/postgresql/data
+
+  nakama:
+    image: heroiclabs/nakama:3.22.0
+    depends_on:
+      - nakama-db
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >
+        /nakama/nakama migrate up --database.address nakama:localpass@nakama-db:5432/nakama &&
+        exec /nakama/nakama --config /nakama/data/local.yml
+    ports:
+      - "7350:7350"   # API
+      - "7351:7351"   # Console
+      - "7349:7349"   # gRPC
+    volumes:
+      - ./nakama/local.yml:/nakama/data/local.yml:ro
+
+volumes:
+  nakama_db_data:
