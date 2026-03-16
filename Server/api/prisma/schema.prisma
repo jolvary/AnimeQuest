@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @db.Uuid
+  displayName String   @map("display_name")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  watchEntries WatchEntry[]
+  userQuests   UserQuest[]
+
+  @@map("users")
+}
+
+model Anime {
+  id              BigInt   @id @default(autoincrement())
+  provider        String
+  providerId      String   @map("provider_id")
+  title           String
+  genres          String[] @default([])
+  episodes        Int?
+  year            Int?
+  trailerYoutubeId String? @map("trailer_youtube_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  watchEntries WatchEntry[]
+
+  @@unique([provider, providerId])
+  @@map("anime")
+}
+
+model Quest {
+  id           BigInt   @id @default(autoincrement())
+  code         String   @unique
+  title        String
+  description  String
+  requirements Json
+  rewards      Json
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  userQuests UserQuest[]
+
+  @@map("quests")
+}
+
+model UserQuest {
+  userId    String @map("user_id") @db.Uuid
+  questId   BigInt @map("quest_id")
+  status    String
+  progress  Json   @default("{}")
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  user  User  @relation(fields: [userId], references: [id])
+  quest Quest @relation(fields: [questId], references: [id])
+
+  @@id([userId, questId])
+  @@map("user_quests")
+}
+
+model WatchEntry {
+  userId          String @map("user_id") @db.Uuid
+  animeId         BigInt @map("anime_id")
+  status          String
+  score           Int?
+  episodesWatched Int    @default(0) @map("episodes_watched")
+  updatedAt       DateTime @default(now()) @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+  anime Anime @relation(fields: [animeId], references: [id])
+
+  @@id([userId, animeId])
+  @@map("watch_entries")
+}
