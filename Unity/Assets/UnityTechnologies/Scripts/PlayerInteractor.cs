@@ -4,48 +4,66 @@ using UnityEngine.InputSystem;
 
 public class PlayerInteractor : MonoBehaviour
 {
+    [Header("References")]
     public Transform cam;
-    public float interactDistance = 3f;
-
-    [Header("UI")]
     public TextMeshProUGUI promptText;
+
+    [Header("Settings")]
+    public float interactDistance = 3f;
+    public LayerMask interactMask = ~0;
 
     private IInteractable current;
 
-    void Update()
+    private void Update()
     {
         DetectInteractable();
 
-        if (current != null && Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame)
+        bool interactPressed =
+            (Keyboard.current != null && Keyboard.current.eKey.wasPressedThisFrame) ||
+            (Gamepad.current != null && Gamepad.current.buttonSouth.wasPressedThisFrame);
+
+        if (current != null && interactPressed)
         {
-            current.Interact();
+            current.Interact(this);
         }
     }
 
-    void DetectInteractable()
+    private void DetectInteractable()
     {
         current = null;
 
-        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, interactDistance))
+        if (cam == null)
         {
+            SetPrompt(false, "");
+            return;
+        }
 
+        if (Physics.Raycast(cam.position, cam.forward, out RaycastHit hit, interactDistance, interactMask))
+        {
             var interactable = hit.collider.GetComponentInParent<IInteractable>();
             if (interactable != null)
             {
-
                 current = interactable;
-                if (promptText != null)
-                {
-                    promptText.text = $"{current.GetPrompt()} (E)";
-                    promptText.enabled = true;
-                }
+                SetPrompt(true, $"{current.GetPrompt()}");
                 return;
             }
         }
 
-        Debug.Log("No Hit!");
+        SetPrompt(false, "");
+    }
 
-        if (promptText != null)
-            promptText.enabled = false;
+    private void SetPrompt(bool visible, string text)
+    {
+        if (promptText == null) return;
+
+        promptText.enabled = visible;
+        if (visible)
+        {
+#if UNITY_IOS || UNITY_ANDROID
+            promptText.text = $"{text} (Tap)";
+#else
+            promptText.text = $"{text} (E)";
+#endif
+        }
     }
 }

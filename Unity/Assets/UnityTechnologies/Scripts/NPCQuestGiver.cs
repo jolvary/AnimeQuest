@@ -2,14 +2,31 @@ using UnityEngine;
 
 public class NPCQuestGiver : MonoBehaviour, IInteractable
 {
-    public UIManager ui;
+    [Header("NPC")]
     public string npcName = "Quest NPC";
+    public string questCode = "starter-quest";
 
-    public void Interact()
+    [Header("References")]
+    public UIManager uiManager;
+    public QuestPanelController questPanelController;
+
+    public void Interact(PlayerInteractor interactor)
     {
-        if (ui) ui.questsPanel.SetActive(true);
-        Debug.Log($"{npcName}: Open quests UI");
+        if (uiManager != null)
+        {
+            uiManager.OpenQuestsPanel();
+        }
+
+        if (questPanelController != null)
+        {
+            questPanelController.OpenFromNpc(npcName, questCode);
+        }
+
+        Debug.Log($"{npcName}: opened quest UI for quest code {questCode}");
     }
 
-    public string GetPrompt() => $"Talk to {npcName}";
+    public string GetPrompt()
+    {
+        return $"Talk to {npcName}";
+    }
 }
