@@ -1,4 +1,4 @@
-# AnimeQuest
+# AnimeQuest <img src="https://i.gyazo.com/ddc8094729e58c6f727a7be14ab39de7.png" alt="Anime Data Visualization" width="50">
 
 **AnimeQuest** es un proyecto que explora el mundo del anime mediante la recopilación y análisis de datos.  
 La plataforma recopila información de diferentes sitios web de anime y la transforma en visualizaciones que ayudan a comprender tendencias, géneros populares y hábitos de los fans.
@@ -30,48 +30,57 @@ El objetivo de AnimeQuest es combinar **anime y análisis de datos** para descub
 
 ---
 
-## Enlace de referencia
-
-Repositorio del proyecto utilizado como inspiración:
-
-https://github.com/jolvary/AnimeQuest/
-
----
-
-## Concepto del proyecto
-
-<img src="https://i.gyazo.com/ddc8094729e58c6f727a7be14ab39de7.png" alt="Anime Data Visualization" width="50">
-
-AnimeQuest utiliza análisis de datos para explorar tendencias del anime y ofrecer información visual sobre la industria y la comunidad.
-
-
-
----
-
-## Ejemplo de código
-
-El siguiente ejemplo muestra un fragmento simplificado de un **script en javascript para obtener información de anime** usando scraping.
-
-```js
-const CLIENT_ID = process.env.MAL_CLIENT_ID;
-
-async function top3Season(year, season) {
-  const url = `https://api.myanimelist.net/v2/anime/season/${year}/${season}?sort=anime_score&limit=3&fields=title,mean`;
-
-  const res = await fetch(url, {
-    headers: { "X-MAL-CLIENT-ID": CLIENT_ID },
-  });
-
-  const data = await res.json();
-  return data.data.map((x) => x.node);
-}
-
-top3Season(2024, "spring").then(console.log).catch(console.error);
+## Arcquitectura del proyecto
 ```
-## Conclusión
+Unity Client (WebGL / Mobile)
+        ↓
+   Node.js API (REST + GraphQL)
+        ↓
+   PostgreSQL (Game Data)
+        ↑
+   Redis (Cache / Events)
+        ↑
+   Nakama (Auth, Multiplayer, Chat)
+```
+### Responsibilidades
 
-AnimeQuest demuestra cómo el análisis de datos puede utilizarse para estudiar la industria del anime y comprender mejor las preferencias de los fans.  
-Al combinar scraping, procesamiento de datos y visualización, el proyecto ofrece una nueva forma de explorar el universo del anime.
+| Layer        | Responsibility |
+|-------------|--------------|
+| Unity       | 3D world, UI, interaction, player input |
+| Nakama      | Authentication, sessions, multiplayer, chat, friends |
+| API         | Game logic, quests, anime catalog, DTOs |
+| PostgreSQL  | Persistent data (users, anime, quests, progress) |
+| Redis       | Caching, rate limiting, event queues |
 
 ---
-<sub>Autor: Álvaro Jiménez Ortiz</sub>
+
+## Integracion a futuro: MyAnimeList
+
+Responsibilidades:
+- Fetch anime data
+- Import user lists
+- Normalize into DB
+
+Arquitectura:
+
+```
+Unity Client (WebGL / Mobile)
+        ↓
+   Node.js API (REST + GraphQL)
+        ↓
+   MyAnimelist API (REST)
+        ↓
+   PostgreSQL (Game Data)
+        ↑
+   Redis (Cache / Events)
+        ↑
+   Nakama (Auth, Multiplayer, Chat)
+```
+
+
+---
+
+## Author
+
+
+Álvaro Jiménez Ortiz
