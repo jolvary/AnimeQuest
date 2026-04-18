@@ -73,6 +73,15 @@ services:
     ports:
       - "3000:3000"
 
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
 volumes:
   nakama_db_data:
   app_db_data:
