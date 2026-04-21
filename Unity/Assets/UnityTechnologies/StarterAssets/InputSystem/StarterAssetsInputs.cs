@@ -31,8 +31,7 @@ namespace StarterAssets
 			if(cursorInputForLook)
 			{
 				LookInput(value.Get<Vector2>());
-                Debug.Log("LOOK: " + look);
-            }
+			}
 		}
 
 		public void OnJump(InputValue value)
