@@ -11,7 +11,12 @@ const swagger_1 = __importDefault(require("@fastify/swagger"));
 const swagger_ui_1 = __importDefault(require("@fastify/swagger-ui"));
 const nakama_1 = require("./nakama");
 function buildServer(ctx) {
-    const app = (0, fastify_1.default)({ logger: true });
+    const app = (0, fastify_1.default)({
+        logger: true,
+        serializerOpts: {
+            replacer: (_key, value) => typeof value === "bigint" ? value.toString() : value,
+        },
+    });
     app.register(cors_1.default, { origin: true });
     app.register(rate_limit_1.default, {
         max: 120,
@@ -62,15 +67,15 @@ function buildServer(ctx) {
         const userId = req.userId;
         const displayName = req.username ?? `player_${userId.slice(0, 6)}`;
         const user = await ctx.prisma.user.upsert({
-            where: { id: userId },
+            where: { userId },
             update: { displayName },
             create: {
-                id: userId,
+                userId,
                 displayName,
             },
         });
         return {
-            id: user.id,
+            id: user.userId,
             displayName: user.displayName,
         };
     });
@@ -91,7 +96,7 @@ function buildServer(ctx) {
             orderBy: { createdAt: "desc" },
             take: limit,
             select: {
-                id: true,
+                animeId: true,
                 title: true,
                 year: true,
                 episodes: true,
@@ -101,14 +106,25 @@ function buildServer(ctx) {
                 providerId: true,
             },
         });
-        return { items: rows };
+        return {
+            items: rows.map((row) => ({
+                id: row.animeId.toString(),
+                title: row.title,
+                year: row.year,
+                episodes: row.episodes,
+                genres: row.genres,
+                trailerYoutubeId: row.trailerYoutubeId,
+                provider: row.provider,
+                providerId: row.providerId,
+            })),
+        };
     });
     // List quests
     app.get("/api/quests", async () => {
         const quests = await ctx.prisma.quest.findMany({
-            orderBy: { id: "asc" },
+            orderBy: { questId: "asc" },
             select: {
-                id: true,
+                questId: true,
                 code: true,
                 title: true,
                 description: true,
@@ -116,7 +132,16 @@ function buildServer(ctx) {
                 rewards: true,
             },
         });
-        return { items: quests };
+        return {
+            items: quests.map((quest) => ({
+                id: quest.questId.toString(),
+                code: quest.code,
+                title: quest.title,
+                description: quest.description,
+                requirements: quest.requirements,
+                rewards: quest.rewards,
+            })),
+        };
     });
     // Accept quest
     app.post("/api/quests/:code/accept", async (req, reply) => {
@@ -133,7 +158,7 @@ function buildServer(ctx) {
             where: {
                 userId_questId: {
                     userId,
-                    questId: quest.id,
+                    questId: quest.questId,
                 },
             },
             update: {
@@ -142,7 +167,7 @@ function buildServer(ctx) {
             },
             create: {
                 userId,
-                questId: quest.id,
+                questId: quest.questId,
                 status: "active",
                 progress: {},
             },
@@ -156,6 +181,8 @@ function buildServer(ctx) {
         "users",
         "watch_entries",
         "user_quests",
+        "achievements",
+        "user_achievements",
     ]);
     app.get("/api/table/:name", async (req, reply) => {
         const params = req.params;

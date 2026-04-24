@@ -37,6 +37,8 @@ public class UIManager : MonoBehaviour
             playerInputs = FindFirstObjectByType<StarterAssetsInputs>();
         }
 
+        ResolvePreferredFont();
+        ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
         HideAll();
@@ -50,7 +52,7 @@ public class UIManager : MonoBehaviour
         if (Keyboard.current.digit2Key.wasPressedThisFrame) ToggleExclusive(friendsPanel);
         if (Keyboard.current.digit3Key.wasPressedThisFrame) OpenQuestsPanel();
         if (Keyboard.current.digit4Key.wasPressedThisFrame) OpenAnimePanel();
-        if (Keyboard.current.digit5Key.wasPressedThisFrame) OpenTablePanel("anime");
+        if (Keyboard.current.digit5Key.wasPressedThisFrame) OpenTablePanel("all");
     }
 
     public void OpenQuestsPanel()
@@ -230,9 +232,43 @@ public class UIManager : MonoBehaviour
 #endif
         }
 
-        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
+        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         text.alignment = TextAnchor.MiddleCenter;
         text.fontSize = 34;
         text.color = new Color(0.16f, 0.09f, 0.03f, 1f);
+    }
+
+    private void ConfigurePanelControllers()
+    {
+        questPanelController?.ConfigureFont(panelTitleFont);
+        animeCatalogPanelController?.ConfigureFont(panelTitleFont);
+        tableViewerPanelController?.ConfigureFont(panelTitleFont);
+    }
+
+    private void ResolvePreferredFont()
+    {
+        if (panelTitleFont != null) return;
+
+#if UNITY_EDITOR
+        panelTitleFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/BMYEONSUNG_ttf.ttf");
+#endif
+
+        if (panelTitleFont == null)
+        {
+            var loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
+            foreach (var loadedFont in loadedFonts)
+            {
+                if (loadedFont != null && loadedFont.name.IndexOf("BMYEONSUNG", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    panelTitleFont = loadedFont;
+                    break;
+                }
+            }
+        }
+
+        if (panelTitleFont == null)
+        {
+            panelTitleFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        }
     }
 }

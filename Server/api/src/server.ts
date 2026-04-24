@@ -4,7 +4,7 @@ import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
 import Redis from "ioredis";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { fetchNakamaAccount } from "./nakama";
 
 export type AppContext = {
@@ -20,6 +20,28 @@ export type AppContext = {
 };
 
 type TableRow = Record<string, unknown>;
+type AnimeListRow = Prisma.AnimeGetPayload<{
+  select: {
+    animeId: true;
+    title: true;
+    year: true;
+    episodes: true;
+    genres: true;
+    trailerYoutubeId: true;
+    provider: true;
+    providerId: true;
+  };
+}>;
+type QuestListRow = Prisma.QuestGetPayload<{
+  select: {
+    questId: true;
+    code: true;
+    title: true;
+    description: true;
+    requirements: true;
+    rewards: true;
+  };
+}>;
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -29,7 +51,13 @@ declare module "fastify" {
 }
 
 export function buildServer(ctx: AppContext) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({
+    logger: true,
+    serializerOpts: {
+      replacer: (_key: string, value: unknown) =>
+        typeof value === "bigint" ? value.toString() : value,
+    },
+  });
 
   app.register(cors, { origin: true });
 
@@ -91,16 +119,16 @@ export function buildServer(ctx: AppContext) {
     const displayName = req.username ?? `player_${userId.slice(0, 6)}`;
 
     const user = await ctx.prisma.user.upsert({
-      where: { id: userId },
+      where: { userId },
       update: { displayName },
       create: {
-        id: userId,
+        userId,
         displayName,
       },
     });
 
     return {
-      id: user.id,
+      id: user.userId,
       displayName: user.displayName,
     };
   });
@@ -111,7 +139,7 @@ export function buildServer(ctx: AppContext) {
     const q = query.q?.trim();
     const limit = Math.min(Number.parseInt(query.limit ?? "20", 10) || 20, 100);
 
-    const rows = await ctx.prisma.anime.findMany({
+    const rows: AnimeListRow[] = await ctx.prisma.anime.findMany({
       where: q
         ? {
             title: {
@@ -123,7 +151,7 @@ export function buildServer(ctx: AppContext) {
       orderBy: { createdAt: "desc" },
       take: limit,
       select: {
-        id: true,
+        animeId: true,
         title: true,
         year: true,
         episodes: true,
@@ -134,15 +162,26 @@ export function buildServer(ctx: AppContext) {
       },
     });
 
-    return { items: rows };
+    return {
+      items: rows.map((row: AnimeListRow) => ({
+        id: row.animeId.toString(),
+        title: row.title,
+        year: row.year,
+        episodes: row.episodes,
+        genres: row.genres,
+        trailerYoutubeId: row.trailerYoutubeId,
+        provider: row.provider,
+        providerId: row.providerId,
+      })),
+    };
   });
 
   // List quests
   app.get("/api/quests", async () => {
-    const quests = await ctx.prisma.quest.findMany({
-      orderBy: { id: "asc" },
+    const quests: QuestListRow[] = await ctx.prisma.quest.findMany({
+      orderBy: { questId: "asc" },
       select: {
-        id: true,
+        questId: true,
         code: true,
         title: true,
         description: true,
@@ -151,7 +190,16 @@ export function buildServer(ctx: AppContext) {
       },
     });
 
-    return { items: quests };
+    return {
+      items: quests.map((quest: QuestListRow) => ({
+        id: quest.questId.toString(),
+        code: quest.code,
+        title: quest.title,
+        description: quest.description,
+        requirements: quest.requirements,
+        rewards: quest.rewards,
+      })),
+    };
   });
 
   // Accept quest
@@ -172,7 +220,7 @@ export function buildServer(ctx: AppContext) {
       where: {
         userId_questId: {
           userId,
-          questId: quest.id,
+          questId: quest.questId,
         },
       },
       update: {
@@ -181,7 +229,7 @@ export function buildServer(ctx: AppContext) {
       },
       create: {
         userId,
-        questId: quest.id,
+        questId: quest.questId,
         status: "active",
         progress: {},
       },
@@ -197,6 +245,8 @@ export function buildServer(ctx: AppContext) {
     "users",
     "watch_entries",
     "user_quests",
+    "achievements",
+    "user_achievements",
   ]);
 
   app.get("/api/table/:name", async (req, reply) => {

@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-  id          String   @id @db.Uuid
+  userId      String   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
   displayName String   @map("display_name")
   createdAt   DateTime @default(now()) @map("created_at")
 
@@ -19,7 +19,7 @@ model User {
 }
 
 model Anime {
-  id              BigInt   @id @default(autoincrement())
+  animeId         String   @id @default(dbgenerated("gen_random_uuid()")) @map("anime_id") @db.Uuid
   provider        String
   providerId      String   @map("provider_id")
   title           String
@@ -36,7 +36,7 @@ model Anime {
 }
 
 model Quest {
-  id           BigInt   @id @default(autoincrement())
+  questId      String   @id @default(dbgenerated("gen_random_uuid()")) @map("quest_id") @db.Uuid
   code         String   @unique
   title        String
   description  String
@@ -51,13 +51,13 @@ model Quest {
 
 model UserQuest {
   userId    String @map("user_id") @db.Uuid
-  questId   BigInt @map("quest_id")
+  questId   String @map("quest_id") @db.Uuid
   status    String
   progress  Json   @default("{}")
   updatedAt DateTime @default(now()) @map("updated_at")
 
-  user  User  @relation(fields: [userId], references: [id])
-  quest Quest @relation(fields: [questId], references: [id])
+  user  User  @relation(fields: [userId], references: [userId])
+  quest Quest @relation(fields: [questId], references: [questId])
 
   @@id([userId, questId])
   @@map("user_quests")
@@ -65,14 +65,14 @@ model UserQuest {
 
 model WatchEntry {
   userId          String @map("user_id") @db.Uuid
-  animeId         BigInt @map("anime_id")
+  animeId         String @map("anime_id") @db.Uuid
   status          String
   score           Int?
   episodesWatched Int    @default(0) @map("episodes_watched")
   updatedAt       DateTime @default(now()) @map("updated_at")
 
-  user User @relation(fields: [userId], references: [id])
-  anime Anime @relation(fields: [animeId], references: [id])
+  user User @relation(fields: [userId], references: [userId])
+  anime Anime @relation(fields: [animeId], references: [animeId])
 
   @@id([userId, animeId])
   @@map("watch_entries")
