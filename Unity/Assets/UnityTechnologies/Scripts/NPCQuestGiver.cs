@@ -22,7 +22,7 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
             questPanelController.OpenFromNpc(npcName, questCode);
         }
 
-        Debug.Log($"{npcName}: opened quest UI for quest code {questCode}");
+        Debug.Log($"{npcName}: toggled Weekly quests UI for quest code {questCode}");
     }
 
     public string GetPrompt()

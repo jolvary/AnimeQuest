@@ -2045,7 +2045,7 @@ GameObject:
   - component: {fileID: 1766417207}
   - component: {fileID: 1766417210}
   m_Layer: 5
-  m_Name: Panel_Quests
+  m_Name: Panel_WeeklyQuests
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2496,6 +2496,8 @@ MonoBehaviour:
   questPanelController: {fileID: 1766417210}
   animeCatalogPanelController: {fileID: 1011018896}
   tableViewerPanelController: {fileID: 1886229769}
+  fantasyWoodenBoardSprite: {fileID: 21300000, guid: 90a2dde0942123c4ebb9c4af580c5818, type: 3}
+  closeButtonSprite: {fileID: 21300000, guid: 11277a3f23988ec47908362d708edaa8, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
