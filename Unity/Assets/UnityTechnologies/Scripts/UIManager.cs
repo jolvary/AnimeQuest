@@ -1,6 +1,10 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using StarterAssets;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 public class UIManager : MonoBehaviour
 {
@@ -19,9 +23,20 @@ public class UIManager : MonoBehaviour
     [Header("Visuals")]
     public Sprite fantasyWoodenBoardSprite;
     public Sprite closeButtonSprite;
+    public Font panelTitleFont;
+
+    [Header("Input")]
+    public StarterAssetsInputs playerInputs;
+
+    private bool _isUiInteractionEnabled;
 
     private void Start()
     {
+        if (playerInputs == null)
+        {
+            playerInputs = FindFirstObjectByType<StarterAssetsInputs>();
+        }
+
         ApplyPanelVisuals();
         AddCloseButtons();
         HideAll();
@@ -76,6 +91,8 @@ public class UIManager : MonoBehaviour
         if (questsPanel) questsPanel.SetActive(false);
         if (animePanel) animePanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
+
+        RefreshCursorState();
     }
 
     private void Toggle(GameObject panel)
@@ -93,6 +110,7 @@ public class UIManager : MonoBehaviour
             target.SetActive(true);
         }
 
+        RefreshCursorState();
         return isOpening;
     }
 
@@ -150,7 +168,41 @@ public class UIManager : MonoBehaviour
         image.type = Image.Type.Simple;
 
         var button = closeObject.GetComponent<Button>();
-        button.onClick.AddListener(() => panel.SetActive(false));
+        button.onClick.AddListener(() =>
+        {
+            panel.SetActive(false);
+            RefreshCursorState();
+        });
+    }
+
+    private void RefreshCursorState()
+    {
+        bool anyPanelOpen = IsAnyPanelOpen();
+        if (anyPanelOpen == _isUiInteractionEnabled) return;
+
+        _isUiInteractionEnabled = anyPanelOpen;
+
+        Cursor.lockState = anyPanelOpen ? CursorLockMode.None : CursorLockMode.Locked;
+        Cursor.visible = anyPanelOpen;
+
+        if (playerInputs != null)
+        {
+            playerInputs.cursorLocked = !anyPanelOpen;
+            playerInputs.cursorInputForLook = !anyPanelOpen;
+            if (anyPanelOpen)
+            {
+                playerInputs.LookInput(Vector2.zero);
+            }
+        }
+    }
+
+    private bool IsAnyPanelOpen()
+    {
+        return (chatPanel && chatPanel.activeSelf) ||
+               (friendsPanel && friendsPanel.activeSelf) ||
+               (questsPanel && questsPanel.activeSelf) ||
+               (animePanel && animePanel.activeSelf) ||
+               (tablePanel && tablePanel.activeSelf);
     }
 
     private void AddWeeklyQuestTitle()
@@ -170,7 +222,15 @@ public class UIManager : MonoBehaviour
 
         var text = titleObject.GetComponent<Text>();
         text.text = "Weekly quests";
-        text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+        if (panelTitleFont == null)
+        {
+#if UNITY_EDITOR
+            panelTitleFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/BMYEONSUNG_ttf.ttf");
+#endif
+        }
+
+        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("Arial.ttf");
         text.alignment = TextAnchor.MiddleCenter;
         text.fontSize = 34;
         text.color = new Color(0.16f, 0.09f, 0.03f, 1f);
