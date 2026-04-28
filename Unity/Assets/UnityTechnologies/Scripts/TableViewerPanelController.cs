@@ -136,6 +136,9 @@ public class TableViewerPanelController : MonoBehaviour
         _contentText = contentObj.GetComponent<Text>();
         _contentText.fontSize = 18;
         _contentText.fontStyle = FontStyle.Normal;
+        _contentText.resizeTextForBestFit = true;
+        _contentText.resizeTextMinSize = 12;
+        _contentText.resizeTextMaxSize = 18;
         _contentText.color = new Color(0.17f, 0.10f, 0.04f, 1f);
         _contentText.alignment = TextAnchor.UpperLeft;
         _contentText.text = string.Empty;
@@ -159,6 +162,9 @@ public class TableViewerPanelController : MonoBehaviour
         var text = obj.GetComponent<Text>();
         text.fontSize = size;
         text.fontStyle = style;
+        text.resizeTextForBestFit = true;
+        text.resizeTextMinSize = Mathf.Max(12, size - 8);
+        text.resizeTextMaxSize = size;
         text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
         text.alignment = TextAnchor.UpperLeft;
         text.text = string.Empty;
@@ -177,6 +183,16 @@ public class TableViewerPanelController : MonoBehaviour
     private Font ResolveFont()
     {
         if (preferredFont != null) return preferredFont;
+
+        Font[] loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
+        foreach (var loadedFont in loadedFonts)
+        {
+            if (loadedFont != null && loadedFont.name.IndexOf("BMYEONSUNG", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return loadedFont;
+            }
+        }
+
         if (_descriptionText != null && _descriptionText.font != null) return _descriptionText.font;
         if (_contentText != null && _contentText.font != null) return _contentText.font;
 

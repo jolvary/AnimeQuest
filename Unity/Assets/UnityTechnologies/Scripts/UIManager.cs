@@ -253,22 +253,26 @@ public class UIManager : MonoBehaviour
         panelTitleFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/BMYEONSUNG_ttf.ttf");
 #endif
 
-        if (panelTitleFont == null)
-        {
-            var loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
-            foreach (var loadedFont in loadedFonts)
-            {
-                if (loadedFont != null && loadedFont.name.IndexOf("BMYEONSUNG", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    panelTitleFont = loadedFont;
-                    break;
-                }
-            }
-        }
+        if (panelTitleFont == null) panelTitleFont = FindLoadedFont("BMYEONSUNG_ttf");
+        if (panelTitleFont == null) panelTitleFont = FindLoadedFont("BMYEONSUNG");
 
         if (panelTitleFont == null)
         {
             panelTitleFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         }
+    }
+
+    private static Font FindLoadedFont(string fontNamePart)
+    {
+        var loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
+        foreach (var loadedFont in loadedFonts)
+        {
+            if (loadedFont != null && loadedFont.name.IndexOf(fontNamePart, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return loadedFont;
+            }
+        }
+
+        return null;
     }
 }
