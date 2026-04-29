@@ -191,9 +191,13 @@ public class UIManager : MonoBehaviour
         {
             playerInputs.cursorLocked = !anyPanelOpen;
             playerInputs.cursorInputForLook = !anyPanelOpen;
+            playerInputs.movementInputEnabled = !anyPanelOpen;
             if (anyPanelOpen)
             {
                 playerInputs.LookInput(Vector2.zero);
+                playerInputs.MoveInput(Vector2.zero);
+                playerInputs.JumpInput(false);
+                playerInputs.SprintInput(false);
             }
         }
     }

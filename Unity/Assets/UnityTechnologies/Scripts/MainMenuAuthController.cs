@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
+using StarterAssets;
 
 public class MainMenuAuthController : MonoBehaviour
 {
@@ -28,6 +29,7 @@ public class MainMenuAuthController : MonoBehaviour
     private InputField _registerUsername;
     private InputField _registerPassword;
     private Text _registerStatus;
+    private StarterAssetsInputs _playerInputs;
 
 
     private void Awake()
@@ -51,6 +53,7 @@ public class MainMenuAuthController : MonoBehaviour
         ResolveVisualStyle();
         BuildPanels();
         ShowLoginPanel();
+        RefreshInteractionState();
     }
 
     public void ShowLoginPanel()
@@ -58,6 +61,7 @@ public class MainMenuAuthController : MonoBehaviour
         if (_loginPanel != null) _loginPanel.SetActive(true);
         if (_registerPanel != null) _registerPanel.SetActive(false);
         if (_loginStatus != null) _loginStatus.text = string.Empty;
+        RefreshInteractionState();
     }
 
     public void ShowRegisterPanel()
@@ -65,6 +69,7 @@ public class MainMenuAuthController : MonoBehaviour
         if (_loginPanel != null) _loginPanel.SetActive(false);
         if (_registerPanel != null) _registerPanel.SetActive(true);
         if (_registerStatus != null) _registerStatus.text = string.Empty;
+        RefreshInteractionState();
     }
 
 
@@ -244,6 +249,51 @@ public class MainMenuAuthController : MonoBehaviour
         uiManager?.HideAll();
 
         gameObject.SetActive(false);
+    }
+
+    private void OnEnable()
+    {
+        RefreshInteractionState();
+    }
+
+    private void OnDisable()
+    {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+        SetPlayerMovementEnabled(true);
+    }
+
+    private void RefreshInteractionState()
+    {
+        if (!isActiveAndEnabled)
+        {
+            return;
+        }
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+        SetPlayerMovementEnabled(false);
+    }
+
+    private void SetPlayerMovementEnabled(bool enabled)
+    {
+        if (_playerInputs == null)
+        {
+            _playerInputs = FindFirstObjectByType<StarterAssetsInputs>();
+            if (_playerInputs == null) return;
+        }
+
+        _playerInputs.cursorLocked = enabled;
+        _playerInputs.cursorInputForLook = enabled;
+        _playerInputs.movementInputEnabled = enabled;
+
+        if (!enabled)
+        {
+            _playerInputs.MoveInput(Vector2.zero);
+            _playerInputs.LookInput(Vector2.zero);
+            _playerInputs.JumpInput(false);
+            _playerInputs.SprintInput(false);
+        }
     }
 
     private InputField CreateInput(Transform parent, string name, Vector2 anchor, string placeholderText, bool isPassword = false)

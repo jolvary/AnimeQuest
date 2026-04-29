@@ -19,11 +19,19 @@ namespace StarterAssets
 		[Header("Mouse Cursor Settings")]
 		public bool cursorLocked = true;
 		public bool cursorInputForLook = true;
+		public bool movementInputEnabled = true;
 
 #if ENABLE_INPUT_SYSTEM
 		public void OnMove(InputValue value)
 		{
-			MoveInput(value.Get<Vector2>());
+			if (movementInputEnabled)
+			{
+				MoveInput(value.Get<Vector2>());
+			}
+			else
+			{
+				MoveInput(Vector2.zero);
+			}
 		}
 
 		public void OnLook(InputValue value)
@@ -36,12 +44,12 @@ namespace StarterAssets
 
 		public void OnJump(InputValue value)
 		{
-			JumpInput(value.isPressed);
+			JumpInput(movementInputEnabled && value.isPressed);
 		}
 
 		public void OnSprint(InputValue value)
 		{
-			SprintInput(value.isPressed);
+			SprintInput(movementInputEnabled && value.isPressed);
 		}
 #endif
 
