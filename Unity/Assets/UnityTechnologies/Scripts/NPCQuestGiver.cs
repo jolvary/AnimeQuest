@@ -34,16 +34,6 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
         }
 
         mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
-        if (mainMenuAuthController != null)
-        {
-            return mainMenuAuthController;
-        }
-
-        var menuObject = new GameObject("MainMenuAuthCanvas");
-        mainMenuAuthController = menuObject.AddComponent<MainMenuAuthController>();
-        mainMenuAuthController.uiManager = uiManager != null ? uiManager : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
-        mainMenuAuthController.animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
-
         return mainMenuAuthController;
     }
 

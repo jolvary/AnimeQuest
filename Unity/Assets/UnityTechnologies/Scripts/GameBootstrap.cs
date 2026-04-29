@@ -8,10 +8,7 @@ public class GameBootstrap : MonoBehaviour
 
     private async void Start()
     {
-        if (mainMenuAuthController == null)
-        {
-            mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
-        }
+        EnsureMainMenuControllerExists();
 
         if (uiManager == null)
         {
@@ -37,6 +34,25 @@ public class GameBootstrap : MonoBehaviour
         {
             Debug.LogError("Bootstrap failed: " + ex.Message);
         }
+    }
+
+    private void EnsureMainMenuControllerExists()
+    {
+        if (mainMenuAuthController != null)
+        {
+            return;
+        }
+
+        mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
+        if (mainMenuAuthController != null)
+        {
+            return;
+        }
+
+        var menuObject = new GameObject("MainMenuAuthCanvas");
+        mainMenuAuthController = menuObject.AddComponent<MainMenuAuthController>();
+        mainMenuAuthController.uiManager = uiManager != null ? uiManager : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        mainMenuAuthController.animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
     }
 
     private async void HandleLoginRequested(string username, string password)

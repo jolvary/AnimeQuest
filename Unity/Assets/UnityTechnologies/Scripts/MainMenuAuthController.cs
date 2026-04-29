@@ -14,9 +14,9 @@ public class MainMenuAuthController : MonoBehaviour
     public AnimeCatalogPanelController animeCatalogPanelController;
 
     [Header("Events")]
-    public UnityEvent<string, string> onLoginRequested;
-    public UnityEvent<string, string> onRegisterRequested;
-    public UnityEvent onIncognitoRequested;
+    public UnityEvent<string, string> onLoginRequested = new UnityEvent<string, string>();
+    public UnityEvent<string, string> onRegisterRequested = new UnityEvent<string, string>();
+    public UnityEvent onIncognitoRequested = new UnityEvent();
 
     private GameObject _loginPanel;
     private GameObject _registerPanel;
