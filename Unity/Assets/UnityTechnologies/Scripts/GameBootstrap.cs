@@ -64,7 +64,9 @@ public class GameBootstrap : MonoBehaviour
         }
         catch (Exception ex)
         {
-            Debug.LogError("Login failed: " + ex.Message);
+            string message = "Login failed: " + ex.Message;
+            Debug.LogError(message);
+            mainMenuAuthController?.SetLoginStatus(message);
         }
     }
 
@@ -77,7 +79,9 @@ public class GameBootstrap : MonoBehaviour
         }
         catch (Exception ex)
         {
-            Debug.LogError("Register failed: " + ex.Message);
+            string message = "Register failed: " + ex.Message;
+            Debug.LogError(message);
+            mainMenuAuthController?.SetRegisterStatus(message);
         }
     }
 
@@ -85,6 +89,8 @@ public class GameBootstrap : MonoBehaviour
     {
         string me = await ApiClient.Instance.PostEnsureMe();
         Debug.Log("Authenticated and ensured user: " + me);
+
+        mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(false);
 
         uiManager?.HideAll();
         if (mainMenuAuthController != null)

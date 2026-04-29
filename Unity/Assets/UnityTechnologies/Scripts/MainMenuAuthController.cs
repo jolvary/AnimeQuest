@@ -94,17 +94,21 @@ public class MainMenuAuthController : MonoBehaviour
 
     private static void EnsureEventSystemExists()
     {
-        if (FindFirstObjectByType<EventSystem>(FindObjectsInactive.Include) != null)
+        var existingEventSystem = FindFirstObjectByType<EventSystem>(FindObjectsInactive.Include);
+        if (existingEventSystem != null)
         {
+            if (existingEventSystem.GetComponent<BaseInputModule>() == null)
+            {
+                existingEventSystem.gameObject.AddComponent<StandaloneInputModule>();
+            }
+
             return;
         }
 
-        var eventSystemObject = new GameObject("EventSystem", typeof(EventSystem));
+        var eventSystemObject = new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
 
 #if ENABLE_INPUT_SYSTEM
         eventSystemObject.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
-#else
-        eventSystemObject.AddComponent<StandaloneInputModule>();
 #endif
     }
 
@@ -182,6 +186,23 @@ public class MainMenuAuthController : MonoBehaviour
         _registerStatus = CreateLabel(parent, "RegisterStatus", new Vector2(0.5f, 0.14f), new Vector2(600f, 36f), 30, new Color(1f, 0.85f, 0.2f), string.Empty);
     }
 
+
+    public void SetLoginStatus(string message)
+    {
+        if (_loginStatus != null)
+        {
+            _loginStatus.text = message ?? string.Empty;
+        }
+    }
+
+    public void SetRegisterStatus(string message)
+    {
+        if (_registerStatus != null)
+        {
+            _registerStatus.text = message ?? string.Empty;
+        }
+    }
+
     private void OnLoginPressed()
     {
         string username = _loginUsername != null ? _loginUsername.text.Trim() : string.Empty;
@@ -193,7 +214,7 @@ public class MainMenuAuthController : MonoBehaviour
             return;
         }
 
-        _loginStatus.text = "Login requested...";
+        SetLoginStatus("Login requested...");
         onLoginRequested?.Invoke(username, password);
     }
 
@@ -208,7 +229,7 @@ public class MainMenuAuthController : MonoBehaviour
             return;
         }
 
-        _registerStatus.text = "Registering account...";
+        SetRegisterStatus("Registering account...");
         onRegisterRequested?.Invoke(username, password);
     }
 
