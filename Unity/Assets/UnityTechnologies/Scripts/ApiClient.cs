@@ -91,4 +91,41 @@ public class ApiClient : MonoBehaviour
 
         return req.downloadHandler.text;
     }
+
+    public async Task<string> PatchWatching(string animeId, bool isWatching)
+    {
+        string body = JsonUtility.ToJson(new WatchingPatchBody { isWatching = isWatching });
+        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/watching", "PATCH", body);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> PatchLists(string animeId, string[] add, string[] remove)
+    {
+        string body = JsonUtility.ToJson(new ListsPatchBody { add = add ?? Array.Empty<string>(), remove = remove ?? Array.Empty<string>() });
+        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/lists", "PATCH", body);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    [Serializable]
+    private class WatchingPatchBody
+    {
+        public bool isWatching;
+    }
+
+    [Serializable]
+    private class ListsPatchBody
+    {
+        public string[] add;
+        public string[] remove;
+    }
 }

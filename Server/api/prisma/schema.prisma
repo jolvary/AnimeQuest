@@ -19,15 +19,15 @@ model User {
 }
 
 model Anime {
-  animeId         String   @id @default(dbgenerated("gen_random_uuid()")) @map("anime_id") @db.Uuid
-  provider        String
-  providerId      String   @map("provider_id")
-  title           String
-  genres          String[] @default([])
-  episodes        Int?
-  year            Int?
-  trailerYoutubeId String? @map("trailer_youtube_id")
-  createdAt       DateTime @default(now()) @map("created_at")
+  animeId          String   @id @default(dbgenerated("gen_random_uuid()")) @map("anime_id") @db.Uuid
+  provider         String
+  providerId       String   @map("provider_id")
+  title            String
+  genres           String[] @default([])
+  episodes         Int?
+  year             Int?
+  trailerYoutubeId String?  @map("trailer_youtube_id")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   watchEntries WatchEntry[]
 
@@ -50,10 +50,10 @@ model Quest {
 }
 
 model UserQuest {
-  userId    String @map("user_id") @db.Uuid
-  questId   String @map("quest_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  questId   String   @map("quest_id") @db.Uuid
   status    String
-  progress  Json   @default("{}")
+  progress  Json     @default("{}")
   updatedAt DateTime @default(now()) @map("updated_at")
 
   user  User  @relation(fields: [userId], references: [userId])
@@ -64,14 +64,14 @@ model UserQuest {
 }
 
 model WatchEntry {
-  userId          String @map("user_id") @db.Uuid
-  animeId         String @map("anime_id") @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  animeId         String   @map("anime_id") @db.Uuid
   status          String
   score           Int?
-  episodesWatched Int    @default(0) @map("episodes_watched")
+  episodesWatched Int      @default(0) @map("episodes_watched")
   updatedAt       DateTime @default(now()) @map("updated_at")
 
-  user User @relation(fields: [userId], references: [userId])
+  user  User  @relation(fields: [userId], references: [userId])
   anime Anime @relation(fields: [animeId], references: [animeId])
 
   @@id([userId, animeId])

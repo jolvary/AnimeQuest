@@ -30,6 +30,11 @@ type AnimeListRow = Prisma.AnimeGetPayload<{
     trailerYoutubeId: true;
     provider: true;
     providerId: true;
+    watchEntries: {
+      select: {
+        status: true;
+      };
+    };
   };
 }>;
 type QuestListRow = Prisma.QuestGetPayload<{
@@ -43,11 +48,63 @@ type QuestListRow = Prisma.QuestGetPayload<{
   };
 }>;
 
+const WATCH_STATUSES = ["watching", "completed", "planned", "dropped", "on_hold"] as const;
+type WatchStatus = (typeof WATCH_STATUSES)[number];
+
+type AnimeDeckItem = {
+  id: string;
+  title: string;
+  briefDescription: string;
+  description: string;
+  imageUrl: string;
+  episodes: number | null;
+  releaseDate: string;
+  isWatching: boolean;
+  watchStatus: WatchStatus | null;
+  lists: string[];
+  genres: string[];
+  trailerYoutubeId: string | null;
+  provider: string;
+  providerId: string;
+};
+
 declare module "fastify" {
   interface FastifyRequest {
     userId?: string;
     username?: string;
   }
+}
+
+function toReleaseDate(year: number | null): string {
+  return year ? `${year}-01-01` : "unknown";
+}
+
+function buildBriefDescription(row: AnimeListRow): string {
+  if (row.genres.length === 0) {
+    return "Anime catalog entry";
+  }
+
+  return `${row.genres.slice(0, 3).join(" • ")} anime`;
+}
+
+function buildDescription(row: AnimeListRow): string {
+  const genreText = row.genres.length > 0 ? row.genres.join(", ") : "varied genres";
+  const episodesText = row.episodes != null ? `${row.episodes} episodes` : "episode count TBD";
+  const yearText = row.year != null ? `${row.year}` : "unknown release year";
+
+  return `${row.title} is listed as ${genreText}, with ${episodesText}, released around ${yearText}.`;
+}
+
+function posterUrl(row: AnimeListRow): string {
+  if (row.trailerYoutubeId) {
+    return `https://img.youtube.com/vi/${row.trailerYoutubeId}/hqdefault.jpg`;
+  }
+
+  return `https://placehold.co/72x108?text=${encodeURIComponent(row.title.slice(0, 2).toUpperCase())}`;
+}
+
+function normalizeWatchStatus(value: string): WatchStatus | null {
+  return WATCH_STATUSES.includes(value as WatchStatus) ? (value as WatchStatus) : null;
 }
 
 export function buildServer(ctx: AppContext) {
@@ -133,8 +190,9 @@ export function buildServer(ctx: AppContext) {
     };
   });
 
-  // Anime search / list
+  // Anime search / list for deck table UI
   app.get("/api/anime", async (req) => {
+    const userId = req.userId!;
     const query = req.query as { q?: string; limit?: string };
     const q = query.q?.trim();
     const limit = Math.min(Number.parseInt(query.limit ?? "20", 10) || 20, 100);
@@ -159,20 +217,157 @@ export function buildServer(ctx: AppContext) {
         trailerYoutubeId: true,
         provider: true,
         providerId: true,
+        watchEntries: {
+          where: { userId },
+          select: { status: true },
+          take: 1,
+        },
       },
     });
 
-    return {
-      items: rows.map((row: AnimeListRow) => ({
+    const items: AnimeDeckItem[] = rows.map((row) => {
+      const watchStatus = normalizeWatchStatus(row.watchEntries[0]?.status ?? "");
+
+      return {
         id: row.animeId.toString(),
         title: row.title,
-        year: row.year,
+        briefDescription: buildBriefDescription(row),
+        description: buildDescription(row),
+        imageUrl: posterUrl(row),
         episodes: row.episodes,
+        releaseDate: toReleaseDate(row.year),
+        isWatching: watchStatus === "watching",
+        watchStatus,
+        lists: watchStatus ? [watchStatus] : [],
         genres: row.genres,
         trailerYoutubeId: row.trailerYoutubeId,
         provider: row.provider,
         providerId: row.providerId,
-      })),
+      };
+    });
+
+    return { items };
+  });
+
+  app.patch("/api/anime/:id/watching", async (req, reply) => {
+    const userId = req.userId!;
+    const params = req.params as { id: string };
+    const body = req.body as { isWatching?: boolean };
+
+    if (typeof body?.isWatching !== "boolean") {
+      return reply.code(400).send({ error: "isWatching must be a boolean" });
+    }
+
+    const anime = await ctx.prisma.anime.findUnique({ where: { animeId: params.id } });
+    if (!anime) {
+      return reply.code(404).send({ error: "Anime not found" });
+    }
+
+    const status: WatchStatus = body.isWatching ? "watching" : "planned";
+    const watchEntry = await ctx.prisma.watchEntry.upsert({
+      where: {
+        userId_animeId: {
+          userId,
+          animeId: params.id,
+        },
+      },
+      update: {
+        status,
+        updatedAt: new Date(),
+      },
+      create: {
+        userId,
+        animeId: params.id,
+        status,
+      },
+    });
+
+    return {
+      id: watchEntry.animeId,
+      isWatching: watchEntry.status === "watching",
+      watchStatus: watchEntry.status,
+      lists: [watchEntry.status],
+    };
+  });
+
+  app.patch("/api/anime/:id/lists", async (req, reply) => {
+    const userId = req.userId!;
+    const params = req.params as { id: string };
+    const body = req.body as { add?: string[]; remove?: string[] };
+
+    const add = Array.isArray(body?.add)
+      ? body.add.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+    const remove = Array.isArray(body?.remove)
+      ? body.remove.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+
+    if (add.length === 0 && remove.length === 0) {
+      return reply.code(400).send({ error: "Request must include add and/or remove arrays" });
+    }
+
+    const anime = await ctx.prisma.anime.findUnique({ where: { animeId: params.id } });
+    if (!anime) {
+      return reply.code(404).send({ error: "Anime not found" });
+    }
+
+    const addStatus = add.map((item) => normalizeWatchStatus(item)).find((item) => item != null) ?? null;
+    const currentEntry = await ctx.prisma.watchEntry.findUnique({
+      where: {
+        userId_animeId: {
+          userId,
+          animeId: params.id,
+        },
+      },
+    });
+    const currentStatus = normalizeWatchStatus(currentEntry?.status ?? "");
+    const shouldRemoveCurrent =
+      currentStatus != null && remove.some((item) => item.trim().toLowerCase() === currentStatus);
+
+    if (addStatus) {
+      await ctx.prisma.watchEntry.upsert({
+        where: {
+          userId_animeId: {
+            userId,
+            animeId: params.id,
+          },
+        },
+        update: {
+          status: addStatus,
+          updatedAt: new Date(),
+        },
+        create: {
+          userId,
+          animeId: params.id,
+          status: addStatus,
+        },
+      });
+    } else if (shouldRemoveCurrent) {
+      await ctx.prisma.watchEntry.delete({
+        where: {
+          userId_animeId: {
+            userId,
+            animeId: params.id,
+          },
+        },
+      });
+    }
+
+    const nextEntry = await ctx.prisma.watchEntry.findUnique({
+      where: {
+        userId_animeId: {
+          userId,
+          animeId: params.id,
+        },
+      },
+    });
+    const nextStatus = normalizeWatchStatus(nextEntry?.status ?? "");
+
+    return {
+      id: params.id,
+      isWatching: nextStatus === "watching",
+      watchStatus: nextStatus,
+      lists: nextStatus ? [nextStatus] : [],
     };
   });
 

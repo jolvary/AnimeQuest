@@ -9,21 +9,44 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
     [Header("References")]
     public UIManager uiManager;
     public QuestPanelController questPanelController;
+    public MainMenuAuthController mainMenuAuthController;
 
     public void Interact(PlayerInteractor interactor)
     {
-        if (uiManager != null)
+        uiManager?.HideAll();
+
+        var menuController = GetOrCreateMainMenuAuthController();
+        if (menuController != null)
         {
-            uiManager.OpenQuestsPanel();
+            menuController.gameObject.SetActive(true);
+            menuController.ShowLoginPanel();
         }
 
-        if (questPanelController != null)
-        {
-            questPanelController.OpenFromNpc(npcName, questCode);
-        }
-
-        Debug.Log($"{npcName}: toggled Weekly quests UI for quest code {questCode}");
+        Debug.Log($"{npcName}: opened Main Menu for quest code {questCode}");
     }
+
+
+    private MainMenuAuthController GetOrCreateMainMenuAuthController()
+    {
+        if (mainMenuAuthController != null)
+        {
+            return mainMenuAuthController;
+        }
+
+        mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
+        if (mainMenuAuthController != null)
+        {
+            return mainMenuAuthController;
+        }
+
+        var menuObject = new GameObject("MainMenuAuthCanvas");
+        mainMenuAuthController = menuObject.AddComponent<MainMenuAuthController>();
+        mainMenuAuthController.uiManager = uiManager != null ? uiManager : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        mainMenuAuthController.animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
+
+        return mainMenuAuthController;
+    }
+
 
     public string GetPrompt()
     {
