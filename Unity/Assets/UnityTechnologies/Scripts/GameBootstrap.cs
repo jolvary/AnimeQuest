@@ -6,59 +6,60 @@ public class GameBootstrap : MonoBehaviour
     [SerializeField] private MainMenuAuthController mainMenuAuthController;
     [SerializeField] private UIManager uiManager;
 
-    private async void Start()
+    private void Start()
     {
-        EnsureMainMenuControllerExists();
+        DozzleLogger.Action("Game bootstrap start");
+        ResolveMainMenuController();
 
         if (uiManager == null)
         {
             uiManager = FindFirstObjectByType<UIManager>();
         }
 
-        if (mainMenuAuthController != null)
+        if (mainMenuAuthController == null)
         {
-            mainMenuAuthController.gameObject.SetActive(true);
-            mainMenuAuthController.onLoginRequested.AddListener(HandleLoginRequested);
-            mainMenuAuthController.onRegisterRequested.AddListener(HandleRegisterRequested);
-            mainMenuAuthController.onIncognitoRequested.AddListener(HandleIncognitoRequested);
-            mainMenuAuthController.onLogoutRequested.AddListener(HandleLogoutRequested);
+            DozzleLogger.Error("Main menu UI is missing", "Add MainMenuAuthController to the scene under UI/Canvas instead of relying on runtime creation.");
+            return;
         }
 
-        try
-        {
-            if (mainMenuAuthController == null)
-            {
-                await NakamaAuthManager.Instance.LoginDeviceAsync();
-                await AuthenticateBackendAndOpenGame();
-            }
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("Bootstrap failed: " + ex.Message);
-        }
+        mainMenuAuthController.gameObject.SetActive(true);
+        mainMenuAuthController.onLoginRequested.AddListener(HandleLoginRequested);
+        mainMenuAuthController.onRegisterRequested.AddListener(HandleRegisterRequested);
+        mainMenuAuthController.onIncognitoRequested.AddListener(HandleIncognitoRequested);
+        mainMenuAuthController.onLogoutRequested.AddListener(HandleLogoutRequested);
     }
 
-    private void EnsureMainMenuControllerExists()
+    private void ResolveMainMenuController()
     {
-        if (mainMenuAuthController != null)
+        if (mainMenuAuthController == null)
+        {
+            mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
+        }
+
+        if (mainMenuAuthController == null)
         {
             return;
         }
 
-        mainMenuAuthController = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
-        if (mainMenuAuthController != null)
+        if (mainMenuAuthController.uiManager == null)
         {
-            return;
+            mainMenuAuthController.uiManager = uiManager != null ? uiManager : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
         }
 
-        var menuObject = new GameObject("MainMenuAuthCanvas");
-        mainMenuAuthController = menuObject.AddComponent<MainMenuAuthController>();
-        mainMenuAuthController.uiManager = uiManager != null ? uiManager : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
-        mainMenuAuthController.animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
+        if (mainMenuAuthController.animeCatalogPanelController == null)
+        {
+            mainMenuAuthController.animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
+        }
+
+        if (mainMenuAuthController.userCatalogPanelController == null && mainMenuAuthController.uiManager != null)
+        {
+            mainMenuAuthController.userCatalogPanelController = mainMenuAuthController.uiManager.userCatalogPanelController;
+        }
     }
 
     private async void HandleLoginRequested(string username, string password)
     {
+        DozzleLogger.Action("Handle login", $"username={username}");
         try
         {
             await NakamaAuthManager.Instance.LoginAsync(username, password);
@@ -67,13 +68,14 @@ public class GameBootstrap : MonoBehaviour
         catch (Exception ex)
         {
             string message = "Login failed: " + ex.Message;
-            Debug.LogError(message);
+            DozzleLogger.Error("Handle login failed", ex);
             mainMenuAuthController?.SetLoginStatus(message);
         }
     }
 
     private async void HandleRegisterRequested(string username, string password)
     {
+        DozzleLogger.Action("Handle register", $"username={username}");
         try
         {
             await NakamaAuthManager.Instance.RegisterAsync(username, password);
@@ -82,7 +84,7 @@ public class GameBootstrap : MonoBehaviour
         catch (Exception ex)
         {
             string message = "Register failed: " + ex.Message;
-            Debug.LogError(message);
+            DozzleLogger.Error("Handle register failed", ex);
             mainMenuAuthController?.SetRegisterStatus(message);
         }
     }
@@ -90,6 +92,7 @@ public class GameBootstrap : MonoBehaviour
 
     private async void HandleIncognitoRequested()
     {
+        DozzleLogger.Action("Handle incognito");
         try
         {
             if (NakamaAuthManager.Instance != null && !NakamaAuthManager.Instance.IsAuthenticated)
@@ -99,12 +102,13 @@ public class GameBootstrap : MonoBehaviour
             }
 
             mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(true);
+            mainMenuAuthController?.userCatalogPanelController?.SetIncognitoMode(true);
             uiManager?.OpenAnimePanel();
         }
         catch (Exception ex)
         {
             string message = "Incognito login failed: " + ex.Message;
-            Debug.LogError(message);
+            DozzleLogger.Error("Handle incognito failed", ex);
             mainMenuAuthController?.SetLoginStatus(message);
             if (mainMenuAuthController != null)
             {
@@ -116,6 +120,7 @@ public class GameBootstrap : MonoBehaviour
 
     private async void HandleLogoutRequested()
     {
+        DozzleLogger.Action("Handle logout");
         try
         {
             if (NakamaAuthManager.Instance != null)
@@ -134,7 +139,7 @@ public class GameBootstrap : MonoBehaviour
         catch (Exception ex)
         {
             string message = "Logout failed: " + ex.Message;
-            Debug.LogError(message);
+            DozzleLogger.Error("Handle logout failed", ex);
             mainMenuAuthController?.SetLoginStatus(message);
         }
     }
@@ -142,9 +147,10 @@ public class GameBootstrap : MonoBehaviour
     private async System.Threading.Tasks.Task AuthenticateBackendAndOpenGame()
     {
         string me = await ApiClient.Instance.PostEnsureMe();
-        Debug.Log("Authenticated and ensured user: " + me);
+        DozzleLogger.Action("Authenticated and ensured user", me);
 
         mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(false);
+        mainMenuAuthController?.userCatalogPanelController?.SetIncognitoMode(false);
 
         uiManager?.HideAll();
         if (mainMenuAuthController != null)

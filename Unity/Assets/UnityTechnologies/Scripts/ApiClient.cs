@@ -23,6 +23,8 @@ public class ApiClient : MonoBehaviour
         {
             baseUrl = ResolveBaseUrlForRuntime(baseUrl);
         }
+
+        DozzleLogger.FlushPending();
     }
 
     private static string ResolveBaseUrlForRuntime(string rawUrl)
@@ -60,6 +62,23 @@ public class ApiClient : MonoBehaviour
         return req;
     }
 
+    public async Task PostClientLog(string level, string action, string details = null, string message = null, string timestamp = null)
+    {
+        var body = JsonUtility.ToJson(new ClientLogBody
+        {
+            level = level,
+            action = action,
+            details = details,
+            message = message,
+            timestamp = timestamp,
+            platform = Application.platform.ToString(),
+            unityVersion = Application.unityVersion,
+        });
+
+        var req = CreateRequest($"{baseUrl}/client/logs", UnityWebRequest.kHttpVerbPOST, body, includeAuth: false);
+        await req.SendWebRequest();
+    }
+
     public async Task<string> PostEnsureMe()
     {
         var req = CreateRequest($"{baseUrl}/api/me/ensure", UnityWebRequest.kHttpVerbPOST, "{}");
@@ -71,11 +90,23 @@ public class ApiClient : MonoBehaviour
         return req.downloadHandler.text;
     }
 
-    public async Task<string> GetAnime(string q = "", int limit = 20)
+    public async Task<string> GetAnime(string q = "", int limit = 100, int offset = 0)
     {
-        string url = $"{baseUrl}/api/anime?q={UnityWebRequest.EscapeURL(q)}&limit={limit}";
+        string url = $"{baseUrl}/api/anime?q={UnityWebRequest.EscapeURL(q)}&limit={limit}&offset={offset}";
         bool includeAuth = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated;
         var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET, includeAuth: includeAuth);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> GetUserAnime(string q = "", int limit = 100, int offset = 0)
+    {
+        string url = $"{baseUrl}/api/anime/user?q={UnityWebRequest.EscapeURL(q)}&limit={limit}&offset={offset}";
+        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -141,17 +172,68 @@ public class ApiClient : MonoBehaviour
         return req.downloadHandler.text;
     }
 
-
-    public async Task<string> ImportMyAnimeList(string username)
+    public async Task<string> StartMyAnimeListLink()
     {
-        string body = JsonUtility.ToJson(new MalImportBody { username = username });
-        var req = CreateRequest($"{baseUrl}/api/mal/import", UnityWebRequest.kHttpVerbPOST, body);
+        var req = CreateRequest($"{baseUrl}/api/mal/oauth/start", UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        var response = JsonUtility.FromJson<MalOAuthStartResponse>(req.downloadHandler.text);
+        if (response == null || string.IsNullOrWhiteSpace(response.url))
+            throw new Exception("MAL authorization URL missing");
+
+        return response.url;
+    }
+
+    public async Task<MalOAuthStatusResponse> GetMyAnimeListOAuthStatus()
+    {
+        var req = CreateRequest($"{baseUrl}/api/mal/oauth/status", UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return JsonUtility.FromJson<MalOAuthStatusResponse>(req.downloadHandler.text);
+    }
+
+    public async Task<string> ImportMyAnimeList()
+    {
+        var req = CreateRequest($"{baseUrl}/api/mal/import", UnityWebRequest.kHttpVerbPOST, "{}");
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
             throw new Exception(req.error + " | " + req.downloadHandler.text);
 
         return req.downloadHandler.text;
+    }
+
+    [Serializable]
+    public class MalOAuthStatusResponse
+    {
+        public bool configured = true;
+        public bool linked;
+        public string malUsername;
+        public bool reconnectRequired;
+    }
+
+    [Serializable]
+    private class MalOAuthStartResponse
+    {
+        public string url;
+    }
+
+    [Serializable]
+    private class ClientLogBody
+    {
+        public string level;
+        public string action;
+        public string details;
+        public string message;
+        public string timestamp;
+        public string platform;
+        public string unityVersion;
     }
 
     [Serializable]
@@ -165,11 +247,5 @@ public class ApiClient : MonoBehaviour
     {
         public string[] add;
         public string[] remove;
-    }
-
-    [Serializable]
-    private class MalImportBody
-    {
-        public string username;
     }
 }

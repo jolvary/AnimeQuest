@@ -57,12 +57,15 @@ services:
 
   api:
     build: ../Server/api
+    env_file:
+      - ../Server/api/.env
     environment:
       PORT: "3000"
       DATABASE_URL: "postgresql://app:apppass@app-db:5432/animequest"
       REDIS_URL: "redis://redis:6379"
       NAKAMA_HTTP: "http://nakama:7350"
       NAKAMA_SERVER_KEY: "devserverkey"
+      MAL_SYNC_INTERVAL_MINUTES: ${MAL_SYNC_INTERVAL_MINUTES:-60}
     depends_on:
       app-db:
         condition: service_healthy

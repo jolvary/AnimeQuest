@@ -3,6 +3,11 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE users (
   user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   display_name TEXT NOT NULL CHECK (char_length(display_name) >= 1),
+  mal_user_id TEXT,
+  mal_username TEXT,
+  mal_access_token TEXT,
+  mal_refresh_token TEXT,
+  mal_access_token_expires_at TIMESTAMP,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

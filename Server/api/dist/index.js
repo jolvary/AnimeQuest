@@ -14,6 +14,10 @@ function mustGet(name) {
     }
     return value;
 }
+function optional(name) {
+    const value = process.env[name]?.trim();
+    return value ? value : undefined;
+}
 async function main() {
     const prisma = new client_1.PrismaClient();
     const redis = new ioredis_1.default(mustGet("REDIS_URL"));
@@ -26,8 +30,10 @@ async function main() {
             REDIS_URL: mustGet("REDIS_URL"),
             NAKAMA_HTTP: mustGet("NAKAMA_HTTP"),
             NAKAMA_SERVER_KEY: mustGet("NAKAMA_SERVER_KEY"),
-            MAL_CLIENT_ID: "56edd5ea198727230731b1cdfddd25e0",
-            MAL_ACCESS_TOKEN: process.env.MAL_ACCESS_TOKEN,
+            MAL_CLIENT_ID: optional("MAL_CLIENT_ID"),
+            MAL_CLIENT_SECRET: optional("MAL_CLIENT_SECRET"),
+            MAL_REDIRECT_URI: optional("MAL_REDIRECT_URI"),
+            MAL_TOKEN_ENCRYPTION_KEY: optional("MAL_TOKEN_ENCRYPTION_KEY"),
             MAL_SYNC_INTERVAL_MINUTES: Number.parseInt(process.env.MAL_SYNC_INTERVAL_MINUTES ?? "60", 10),
         },
     });

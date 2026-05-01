@@ -28,19 +28,19 @@ public class QuestPanelController : MonoBehaviour
             string json = await ApiClient.Instance.GetQuests();
             _contentText.text = FormatQuestsAsTable(json);
             ResetScrollToTop();
-            Debug.Log("Quests: " + json);
+            DozzleLogger.Action("Quests loaded", json);
         }
         catch (Exception ex)
         {
             _contentText.text = "Failed to load quests.";
             ResetScrollToTop();
-            Debug.LogError("Failed to load quests: " + ex.Message);
+            DozzleLogger.Error("Failed to load quests", ex);
         }
     }
 
     public void OpenFromNpc(string npcName, string questCode)
     {
-        Debug.Log($"Opened quest panel from NPC {npcName} for quest {questCode}");
+        DozzleLogger.Action("Opened quest panel from NPC", $"npc={npcName}, quest={questCode}");
         RefreshQuests();
     }
 
@@ -49,12 +49,12 @@ public class QuestPanelController : MonoBehaviour
         try
         {
             string json = await ApiClient.Instance.AcceptQuest(questCode);
-            Debug.Log("Quest accepted: " + json);
+            DozzleLogger.Action("Quest accepted", json);
             RefreshQuests();
         }
         catch (Exception ex)
         {
-            Debug.LogError("Failed to accept quest: " + ex.Message);
+            DozzleLogger.Error("Failed to accept quest", ex);
         }
     }
 

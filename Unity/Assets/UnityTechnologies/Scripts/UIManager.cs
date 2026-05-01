@@ -13,11 +13,13 @@ public class UIManager : MonoBehaviour
     public GameObject friendsPanel;
     public GameObject questsPanel;
     public GameObject animePanel;
+    public GameObject userCatalogPanel;
     public GameObject tablePanel;
 
     [Header("Controllers")]
     public QuestPanelController questPanelController;
     public AnimeCatalogPanelController animeCatalogPanelController;
+    public AnimeCatalogPanelController userCatalogPanelController;
     public TableViewerPanelController tableViewerPanelController;
 
     [Header("Visuals")]
@@ -38,6 +40,7 @@ public class UIManager : MonoBehaviour
         }
 
         ResolvePreferredFont();
+        EnsureUserCatalogPanel();
         ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
@@ -52,7 +55,8 @@ public class UIManager : MonoBehaviour
         if (Keyboard.current.digit2Key.wasPressedThisFrame) ToggleExclusive(friendsPanel);
         if (Keyboard.current.digit3Key.wasPressedThisFrame) OpenQuestsPanel();
         if (Keyboard.current.digit4Key.wasPressedThisFrame) OpenAnimePanel();
-        if (Keyboard.current.digit5Key.wasPressedThisFrame) OpenTablePanel("all");
+        if (Keyboard.current.digit5Key.wasPressedThisFrame) OpenUserCatalogPanel();
+        if (Keyboard.current.digit6Key.wasPressedThisFrame) OpenTablePanel("all");
     }
 
     public void OpenQuestsPanel()
@@ -68,6 +72,13 @@ public class UIManager : MonoBehaviour
     {
         ToggleExclusive(animePanel);
         animeCatalogPanelController?.RefreshCatalog();
+    }
+
+    public void OpenUserCatalogPanel()
+    {
+        EnsureUserCatalogPanel();
+        ToggleExclusive(userCatalogPanel);
+        userCatalogPanelController?.RefreshCatalog();
     }
 
     public void OpenTablePanel(string tableName)
@@ -92,6 +103,7 @@ public class UIManager : MonoBehaviour
         if (friendsPanel) friendsPanel.SetActive(false);
         if (questsPanel) questsPanel.SetActive(false);
         if (animePanel) animePanel.SetActive(false);
+        if (userCatalogPanel) userCatalogPanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
 
         RefreshCursorState();
@@ -116,6 +128,84 @@ public class UIManager : MonoBehaviour
         return isOpening;
     }
 
+    private void EnsureUserCatalogPanel()
+    {
+        if (userCatalogPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_UserCatalog") : null;
+            if (existing != null)
+            {
+                userCatalogPanel = existing.gameObject;
+            }
+        }
+
+        if (userCatalogPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            userCatalogPanel = new GameObject("Panel_UserCatalog", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(AnimeCatalogPanelController));
+            userCatalogPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(userCatalogPanel);
+        }
+
+        if (userCatalogPanelController == null)
+        {
+            userCatalogPanelController = userCatalogPanel.GetComponent<AnimeCatalogPanelController>();
+        }
+
+        if (userCatalogPanelController == null)
+        {
+            userCatalogPanelController = userCatalogPanel.AddComponent<AnimeCatalogPanelController>();
+        }
+
+        userCatalogPanel.name = "Panel_UserCatalog";
+        userCatalogPanelController.userCatalogOnly = true;
+        userCatalogPanelController.defaultLimit = 100;
+        userCatalogPanelController.ConfigureFont(panelTitleFont);
+        userCatalogPanel.SetActive(false);
+    }
+
+    private Transform ResolvePanelParent()
+    {
+        if (animePanel != null && animePanel.transform.parent != null)
+        {
+            return animePanel.transform.parent;
+        }
+
+        var canvas = GetComponentInParent<Canvas>(true);
+        if (canvas != null)
+        {
+            return canvas.transform;
+        }
+
+        return transform;
+    }
+
+    private void ConfigureGeneratedPanelRect(GameObject panel)
+    {
+        var rect = panel.GetComponent<RectTransform>();
+        var sourceRect = animePanel != null ? animePanel.GetComponent<RectTransform>() : null;
+
+        if (sourceRect != null)
+        {
+            rect.anchorMin = sourceRect.anchorMin;
+            rect.anchorMax = sourceRect.anchorMax;
+            rect.pivot = sourceRect.pivot;
+            rect.anchoredPosition = sourceRect.anchoredPosition;
+            rect.sizeDelta = sourceRect.sizeDelta;
+            rect.offsetMin = sourceRect.offsetMin;
+            rect.offsetMax = sourceRect.offsetMax;
+        }
+        else
+        {
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = new Vector2(1200f, 720f);
+        }
+    }
+
     private void ApplyPanelVisuals()
     {
         if (fantasyWoodenBoardSprite == null) return;
@@ -124,6 +214,7 @@ public class UIManager : MonoBehaviour
         ApplyPanelSprite(friendsPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(questsPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(animePanel, fantasyWoodenBoardSprite);
+        ApplyPanelSprite(userCatalogPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(tablePanel, fantasyWoodenBoardSprite);
     }
 
@@ -145,6 +236,7 @@ public class UIManager : MonoBehaviour
         AddCloseButton(friendsPanel);
         AddCloseButton(questsPanel);
         AddCloseButton(animePanel);
+        AddCloseButton(userCatalogPanel);
         AddCloseButton(tablePanel);
         AddWeeklyQuestTitle();
     }
@@ -208,6 +300,7 @@ public class UIManager : MonoBehaviour
                (friendsPanel && friendsPanel.activeSelf) ||
                (questsPanel && questsPanel.activeSelf) ||
                (animePanel && animePanel.activeSelf) ||
+               (userCatalogPanel && userCatalogPanel.activeSelf) ||
                (tablePanel && tablePanel.activeSelf);
     }
 
@@ -246,6 +339,17 @@ public class UIManager : MonoBehaviour
     {
         questPanelController?.ConfigureFont(panelTitleFont);
         animeCatalogPanelController?.ConfigureFont(panelTitleFont);
+        if (animeCatalogPanelController != null)
+        {
+            animeCatalogPanelController.userCatalogOnly = false;
+            animeCatalogPanelController.defaultLimit = 100;
+        }
+        userCatalogPanelController?.ConfigureFont(panelTitleFont);
+        if (userCatalogPanelController != null)
+        {
+            userCatalogPanelController.userCatalogOnly = true;
+            userCatalogPanelController.defaultLimit = 100;
+        }
         tableViewerPanelController?.ConfigureFont(panelTitleFont);
     }
 

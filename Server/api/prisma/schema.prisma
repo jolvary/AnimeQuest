@@ -8,9 +8,14 @@ datasource db {
 }
 
 model User {
-  userId      String   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
-  displayName String   @map("display_name")
-  createdAt   DateTime @default(now()) @map("created_at")
+  userId                  String    @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
+  displayName             String    @map("display_name")
+  malUserId               String?   @map("mal_user_id")
+  malUsername             String?   @map("mal_username")
+  malAccessToken          String?   @map("mal_access_token")
+  malRefreshToken         String?   @map("mal_refresh_token")
+  malAccessTokenExpiresAt DateTime? @map("mal_access_token_expires_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
 
   watchEntries WatchEntry[]
   userQuests   UserQuest[]
@@ -23,6 +28,8 @@ model Anime {
   provider         String
   providerId       String   @map("provider_id")
   title            String
+  imageUrl         String?  @map("image_url")
+  synopsis         String?  @db.Text
   genres           String[] @default([])
   episodes         Int?
   year             Int?

@@ -434,6 +434,111 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &296610495
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 296610496}
+  - component: {fileID: 296610499}
+  - component: {fileID: 296610498}
+  - component: {fileID: 296610497}
+  m_Layer: 5
+  m_Name: Panel_MainMenu
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 0
+--- !u!224 &296610496
+RectTransform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 296610495}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1382754763}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: 0}
+  m_SizeDelta: {x: 0, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
+--- !u!114 &296610497
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 296610495}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a6d4b9c4414f44f8b8da4d3fe7d2c7ab, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MainMenuAuthController
+  panelSprite: {fileID: 0}
+  panelFont: {fileID: 0}
+  uiManager: {fileID: 0}
+  animeCatalogPanelController: {fileID: 0}
+  userCatalogPanelController: {fileID: 0}
+  onLoginRequested:
+    m_PersistentCalls:
+      m_Calls: []
+  onRegisterRequested:
+    m_PersistentCalls:
+      m_Calls: []
+  onIncognitoRequested:
+    m_PersistentCalls:
+      m_Calls: []
+  onLogoutRequested:
+    m_PersistentCalls:
+      m_Calls: []
+--- !u!114 &296610498
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 296610495}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: UnityEngine.UI::UnityEngine.UI.Image
+  m_Material: {fileID: 0}
+  m_Color: {r: 1, g: 1, b: 1, a: 0}
+  m_RaycastTarget: 1
+  m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
+  m_Maskable: 1
+  m_OnCullStateChanged:
+    m_PersistentCalls:
+      m_Calls: []
+  m_Sprite: {fileID: 10907, guid: 0000000000000000f000000000000000, type: 0}
+  m_Type: 1
+  m_PreserveAspect: 0
+  m_FillCenter: 1
+  m_FillMethod: 4
+  m_FillAmount: 1
+  m_FillClockwise: 1
+  m_FillOrigin: 0
+  m_UseSpriteMesh: 0
+  m_PixelsPerUnitMultiplier: 1
+--- !u!222 &296610499
+CanvasRenderer:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 296610495}
+  m_CullTransparentMesh: 1
 --- !u!1 &330585543
 GameObject:
   m_ObjectHideFlags: 0
@@ -870,6 +975,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AnimeCatalogPanelController
   defaultSearch: 
   defaultLimit: 20
+  userCatalogOnly: 0
+  preferredFont: {fileID: 0}
 --- !u!1 &1036911667
 GameObject:
   m_ObjectHideFlags: 0
@@ -1042,6 +1149,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::ApiClient
   baseUrl: http://localhost:3000
+  autoResolveLocalhost: 1
 --- !u!114 &1293956294
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1058,6 +1166,7 @@ MonoBehaviour:
   host: localhost
   port: 7350
   serverKey: devserverkey
+  autoResolveLocalhost: 1
 --- !u!114 &1293956295
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1070,6 +1179,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f1bdf90b31f81784cb73e604ea767079, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GameBootstrap
+  mainMenuAuthController: {fileID: 0}
+  uiManager: {fileID: 0}
 --- !u!4 &1293956296
 Transform:
   m_ObjectHideFlags: 0
@@ -1381,6 +1492,7 @@ RectTransform:
   m_Children:
   - {fileID: 289723141}
   - {fileID: 228436492}
+  - {fileID: 296610496}
   - {fileID: 1766417209}
   - {fileID: 1011018895}
   - {fileID: 1886229768}
@@ -2120,6 +2232,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 258b4efbe0612ed4d84193702d634860, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::QuestPanelController
+  preferredFont: {fileID: 0}
 --- !u!1001 &1826873746
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -2272,6 +2385,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ff122d14be6dddd4badb458ff61453f2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TableViewerPanelController
+  preferredFont: {fileID: 0}
+  defaultTables:
+  - users
+  - anime
+  - quests
+  - watch_entries
+  - user_quests
+  - achievements
+  - user_achievements
 --- !u!1 &1892127888
 GameObject:
   m_ObjectHideFlags: 0
@@ -2440,6 +2562,7 @@ MonoBehaviour:
   questCode: starter-quest
   uiManager: {fileID: 2140365924}
   questPanelController: {fileID: 1766417210}
+  mainMenuAuthController: {fileID: 0}
 --- !u!1 &2140365922
 GameObject:
   m_ObjectHideFlags: 0
@@ -2492,12 +2615,16 @@ MonoBehaviour:
   friendsPanel: {fileID: 228436489}
   questsPanel: {fileID: 1766417206}
   animePanel: {fileID: 1011018892}
+  userCatalogPanel: {fileID: 0}
   tablePanel: {fileID: 1886229765}
   questPanelController: {fileID: 1766417210}
   animeCatalogPanelController: {fileID: 1011018896}
+  userCatalogPanelController: {fileID: 0}
   tableViewerPanelController: {fileID: 1886229769}
   fantasyWoodenBoardSprite: {fileID: 21300000, guid: 90a2dde0942123c4ebb9c4af580c5818, type: 3}
   closeButtonSprite: {fileID: 21300000, guid: 11277a3f23988ec47908362d708edaa8, type: 3}
+  panelTitleFont: {fileID: 0}
+  playerInputs: {fileID: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

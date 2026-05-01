@@ -3,6 +3,8 @@ using UnityEngine.Events;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
 using StarterAssets;
+using System;
+using System.Threading.Tasks;
 
 public class MainMenuAuthController : MonoBehaviour
 {
@@ -13,6 +15,7 @@ public class MainMenuAuthController : MonoBehaviour
     [Header("References")]
     public UIManager uiManager;
     public AnimeCatalogPanelController animeCatalogPanelController;
+    public AnimeCatalogPanelController userCatalogPanelController;
 
     [Header("Events")]
     public UnityEvent<string, string> onLoginRequested = new UnityEvent<string, string>();
@@ -31,9 +34,12 @@ public class MainMenuAuthController : MonoBehaviour
     private InputField _registerUsername;
     private InputField _registerPassword;
     private Text _registerStatus;
-    private InputField _malUsernameInput;
+    private Button _linkMalButton;
+    private Button _importMalButton;
     private Text _malImportStatus;
     private StarterAssetsInputs _playerInputs;
+    private bool _isMalLinked;
+    private bool _isPollingMalLink;
 
 
     private void Awake()
@@ -54,6 +60,7 @@ public class MainMenuAuthController : MonoBehaviour
             animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>();
         }
 
+        ResolveUserCatalogController();
         ResolveVisualStyle();
         BuildPanels();
         ShowLoginPanel();
@@ -69,6 +76,11 @@ public class MainMenuAuthController : MonoBehaviour
         if (_loggedInPanel != null) _loggedInPanel.SetActive(isLoggedIn);
         if (_loginStatus != null) _loginStatus.text = string.Empty;
         RefreshInteractionState();
+
+        if (isLoggedIn)
+        {
+            RefreshMyAnimeListStatus();
+        }
     }
 
     public void ShowRegisterPanel()
@@ -143,6 +155,26 @@ public class MainMenuAuthController : MonoBehaviour
         }
     }
 
+    private void ResolveUserCatalogController()
+    {
+        if (userCatalogPanelController == null && uiManager != null)
+        {
+            userCatalogPanelController = uiManager.userCatalogPanelController;
+        }
+
+        if (userCatalogPanelController != null) return;
+
+        var controllers = FindObjectsByType<AnimeCatalogPanelController>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var controller in controllers)
+        {
+            if (controller != null && controller.userCatalogOnly)
+            {
+                userCatalogPanelController = controller;
+                return;
+            }
+        }
+    }
+
     private void BuildPanels()
     {
         _loginPanel = CreatePanel("LoginPanel", true);
@@ -185,6 +217,7 @@ public class MainMenuAuthController : MonoBehaviour
         CreateButton(parent, "LoginButton", "Login", new Vector2(0.5f, 0.34f), new Vector2(220f, 48f), new Color(0.22f, 0.86f, 0.21f), OnLoginPressed);
         CreateButton(parent, "RegisterNavButton", "Create Account", new Vector2(0.79f, 0.22f), new Vector2(210f, 42f), new Color(0.87f, 0.17f, 0.16f), ShowRegisterPanel);
         CreateButton(parent, "IncognitoButton", "Enter in Incognito", new Vector2(0.23f, 0.22f), new Vector2(250f, 42f), new Color(0.32f, 0.50f, 0.76f), OnIncognitoPressed);
+        CreateCloseButton(parent);
 
         _loginStatus = CreateLabel(parent, "LoginStatus", new Vector2(0.5f, 0.14f), new Vector2(600f, 36f), 30, Color.red, string.Empty);
     }
@@ -192,6 +225,7 @@ public class MainMenuAuthController : MonoBehaviour
     private void BuildRegisterPanel(Transform parent)
     {
         CreateHeader(parent, "REGISTER USER");
+        CreateCloseButton(parent);
 
         _registerUsername = CreateInput(parent, "RegisterUsernameInput", new Vector2(0.5f, 0.62f), "Create Username...");
         _registerPassword = CreateInput(parent, "RegisterPasswordInput", new Vector2(0.5f, 0.47f), "Create Password...", true);
@@ -207,13 +241,55 @@ public class MainMenuAuthController : MonoBehaviour
     private void BuildLoggedInPanel(Transform parent)
     {
         CreateHeader(parent, "MAIN MENU");
-        CreateLabel(parent, "LoggedInLabel", new Vector2(0.5f, 0.56f), new Vector2(700f, 42f), 28, Color.black, "You are already logged in.");
-        _malUsernameInput = CreateInput(parent, "MalUsernameInput", new Vector2(0.5f, 0.46f), "MyAnimeList Username...");
-        CreateButton(parent, "ImportMalButton", "Import MyAnimeList", new Vector2(0.5f, 0.34f), new Vector2(280f, 48f), new Color(0.22f, 0.62f, 0.88f), OnImportMyAnimeListPressed);
-        _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.25f), new Vector2(700f, 36f), 24, Color.black, string.Empty);
-        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.5f, 0.14f), new Vector2(240f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
+        CreateCloseButton(parent);
+        CreateLabel(parent, "LoggedInLabel", new Vector2(0.5f, 0.61f), new Vector2(700f, 42f), 28, Color.black, "You are already logged in.");
+        _linkMalButton = CreateButton(parent, "LinkMalButton", "Link MyAnimeList account", new Vector2(0.5f, 0.47f), new Vector2(390f, 48f), new Color(0.22f, 0.62f, 0.88f), OnLinkMyAnimeListPressed);
+        _importMalButton = CreateButton(parent, "ImportMalButton", "Import MyAnimeList", new Vector2(0.5f, 0.34f), new Vector2(310f, 48f), new Color(0.23f, 0.77f, 0.27f), OnImportMyAnimeListPressed);
+        _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.24f), new Vector2(740f, 36f), 24, Color.black, string.Empty);
+        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.5f, 0.13f), new Vector2(240f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
+        ApplyMyAnimeListStatus(null);
     }
 
+
+    private void CreateCloseButton(Transform parent)
+    {
+        var closeButtonObject = new GameObject("CloseButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        closeButtonObject.transform.SetParent(parent, false);
+
+        var rect = closeButtonObject.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(1f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(1f, 1f);
+        rect.anchoredPosition = new Vector2(-24f, -24f);
+        rect.sizeDelta = new Vector2(48f, 48f);
+
+        var image = closeButtonObject.GetComponent<Image>();
+        image.sprite = uiManager != null ? uiManager.closeButtonSprite : null;
+        image.type = Image.Type.Simple;
+        image.color = Color.white;
+
+        var button = closeButtonObject.GetComponent<Button>();
+        button.onClick.AddListener(OnClosePressed);
+
+        if (image.sprite == null)
+        {
+            var fallbackText = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            fallbackText.transform.SetParent(closeButtonObject.transform, false);
+
+            var fallbackRect = fallbackText.GetComponent<RectTransform>();
+            fallbackRect.anchorMin = Vector2.zero;
+            fallbackRect.anchorMax = Vector2.one;
+            fallbackRect.offsetMin = Vector2.zero;
+            fallbackRect.offsetMax = Vector2.zero;
+
+            var text = fallbackText.GetComponent<Text>();
+            text.text = "X";
+            text.font = panelFont != null ? panelFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            text.alignment = TextAnchor.MiddleCenter;
+            text.fontSize = 28;
+            text.color = Color.black;
+        }
+    }
     public void SetLoginStatus(string message)
     {
         if (_loginStatus != null)
@@ -242,6 +318,7 @@ public class MainMenuAuthController : MonoBehaviour
         }
 
         SetLoginStatus("Login requested...");
+        DozzleLogger.Action("Login requested", $"username={username}");
         onLoginRequested?.Invoke(username, password);
     }
 
@@ -257,42 +334,210 @@ public class MainMenuAuthController : MonoBehaviour
         }
 
         SetRegisterStatus("Registering account...");
+        DozzleLogger.Action("Register requested", $"username={username}");
         onRegisterRequested?.Invoke(username, password);
     }
 
     private void OnLogoutPressed()
     {
+        DozzleLogger.Action("Logout requested");
         onLogoutRequested?.Invoke();
     }
 
-    private async void OnImportMyAnimeListPressed()
+    private async void OnLinkMyAnimeListPressed()
     {
-        string username = _malUsernameInput != null ? _malUsernameInput.text.Trim() : string.Empty;
-        if (string.IsNullOrWhiteSpace(username))
+        if (ApiClient.Instance == null || _isPollingMalLink)
         {
-            if (_malImportStatus != null) _malImportStatus.text = "MAL username is required";
+            return;
+        }
+
+
+        try
+        {
+            SetMyAnimeListButtons(false);
+            if (_malImportStatus != null) _malImportStatus.text = "Opening MyAnimeList authorization...";
+            string url = await ApiClient.Instance.StartMyAnimeListLink();
+            Application.OpenURL(url);
+            DozzleLogger.Action("MAL link opened");
+            await PollMyAnimeListLinkStatus();
+        }
+        catch (Exception ex)
+        {
+            _isMalLinked = false;
+            if (_malImportStatus != null) _malImportStatus.text = "MyAnimeList link failed";
+            DozzleLogger.Error("MAL link failed", ex);
+            ApplyMyAnimeListStatus(null);
+        }
+    }
+
+    private async void RefreshMyAnimeListStatus()
+    {
+        if (ApiClient.Instance == null || _malImportStatus == null)
+        {
             return;
         }
 
         try
         {
+            SetMyAnimeListButtons(false);
+            _malImportStatus.text = "Checking MyAnimeList link...";
+            var status = await ApiClient.Instance.GetMyAnimeListOAuthStatus();
+            ApplyMyAnimeListStatus(status);
+        }
+        catch (Exception ex)
+        {
+            _isMalLinked = false;
+            _malImportStatus.text = "MyAnimeList status unavailable";
+            DozzleLogger.Error("MAL status failed", ex);
+            SetMyAnimeListButtons(true);
+        }
+    }
+
+    private async Task PollMyAnimeListLinkStatus()
+    {
+        _isPollingMalLink = true;
+        try
+        {
+            for (int attempt = 0; attempt < 30; attempt++)
+            {
+                await Task.Delay(2000);
+                var status = await ApiClient.Instance.GetMyAnimeListOAuthStatus();
+                if (status != null && status.linked)
+                {
+                    ApplyMyAnimeListStatus(status);
+                    return;
+                }
+
+                if (_malImportStatus != null)
+                {
+                    _malImportStatus.text = "Waiting for MyAnimeList authorization...";
+                }
+            }
+
+            ApplyMyAnimeListStatus(null);
+            if (_malImportStatus != null) _malImportStatus.text = "Finish authorization in your browser.";
+        }
+        finally
+        {
+            _isPollingMalLink = false;
+        }
+    }
+
+    private async void OnImportMyAnimeListPressed()
+    {
+        if (!_isMalLinked)
+        {
+            if (_malImportStatus != null) _malImportStatus.text = "Link MyAnimeList first.";
+            return;
+        }
+
+        try
+        {
+            SetMyAnimeListButtons(false);
             if (_malImportStatus != null) _malImportStatus.text = "Importing from MyAnimeList...";
-            await ApiClient.Instance.ImportMyAnimeList(username);
+            await ApiClient.Instance.ImportMyAnimeList();
+            DozzleLogger.Action("MAL import completed");
             if (_malImportStatus != null) _malImportStatus.text = "Import complete.";
             animeCatalogPanelController?.RefreshCatalog();
+            ResolveUserCatalogController();
+            userCatalogPanelController?.RefreshCatalog();
+            RefreshMyAnimeListStatus();
+            gameObject.SetActive(false);
+            uiManager?.OpenUserCatalogPanel();
         }
         catch (System.Exception ex)
         {
-            if (_malImportStatus != null) _malImportStatus.text = "Import failed";
-            Debug.LogError("MAL import failed: " + ex.Message);
+            bool needsReconnect = ex.Message.IndexOf("reconnect", StringComparison.OrdinalIgnoreCase) >= 0 || ex.Message.IndexOf("not linked", StringComparison.OrdinalIgnoreCase) >= 0;
+            if (needsReconnect)
+            {
+                _isMalLinked = false;
+                if (_malImportStatus != null) _malImportStatus.text = "Reconnect MyAnimeList.";
+                ApplyMyAnimeListStatus(null);
+            }
+            else if (_malImportStatus != null)
+            {
+                _malImportStatus.text = "Import failed";
+            }
+
+            DozzleLogger.Error("MAL import failed", ex);
+            SetMyAnimeListButtons(true);
+        }
+    }
+
+    private void ApplyMyAnimeListStatus(ApiClient.MalOAuthStatusResponse status)
+    {
+        if (status != null && !status.configured)
+        {
+            _isMalLinked = false;
+            if (_malImportStatus != null)
+            {
+                _malImportStatus.text = "MyAnimeList linking unavailable on this server.";
+            }
+
+            SetButtonLabel(_linkMalButton, "MyAnimeList unavailable");
+            SetButtonInteractable(_linkMalButton, false);
+            SetButtonInteractable(_importMalButton, false);
+            return;
+        }
+
+        _isMalLinked = status != null && status.linked && !status.reconnectRequired;
+        string linkedName = !string.IsNullOrWhiteSpace(status?.malUsername) ? $": {status.malUsername}" : string.Empty;
+
+        if (_malImportStatus != null)
+        {
+            if (_isMalLinked)
+            {
+                _malImportStatus.text = $"MyAnimeList linked{linkedName}.";
+            }
+            else if (status != null && status.reconnectRequired)
+            {
+                _malImportStatus.text = "Reconnect MyAnimeList.";
+            }
+            else
+            {
+                _malImportStatus.text = "MyAnimeList not linked.";
+            }
+        }
+
+        SetButtonLabel(_linkMalButton, _isMalLinked ? "Reconnect MyAnimeList" : "Link MyAnimeList account");
+        SetButtonInteractable(_linkMalButton, true);
+        SetButtonInteractable(_importMalButton, _isMalLinked);
+    }
+
+    private void SetMyAnimeListButtons(bool linkEnabled)
+    {
+        SetButtonInteractable(_linkMalButton, linkEnabled);
+        SetButtonInteractable(_importMalButton, linkEnabled && _isMalLinked);
+    }
+
+    private void SetButtonInteractable(Button button, bool interactable)
+    {
+        if (button != null)
+        {
+            button.interactable = interactable;
+        }
+    }
+
+    private void SetButtonLabel(Button button, string label)
+    {
+        if (button == null) return;
+        var text = button.GetComponentInChildren<Text>();
+        if (text != null)
+        {
+            text.text = label;
         }
     }
 
     private void OnIncognitoPressed()
     {
+        DozzleLogger.Action("Incognito requested from main menu");
         if (animeCatalogPanelController != null)
         {
             animeCatalogPanelController.SetIncognitoMode(true);
+        }
+        if (userCatalogPanelController != null)
+        {
+            userCatalogPanelController.SetIncognitoMode(true);
         }
 
         onIncognitoRequested?.Invoke();
@@ -301,9 +546,28 @@ public class MainMenuAuthController : MonoBehaviour
         gameObject.SetActive(false);
     }
 
+    private void OnClosePressed()
+    {
+        bool isLoggedIn = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated && !NakamaAuthManager.Instance.IsIncognitoSession;
+        DozzleLogger.Action("Main menu close pressed", $"isLoggedIn={isLoggedIn}");
+
+        if (!isLoggedIn)
+        {
+            OnIncognitoPressed();
+            return;
+        }
+
+        uiManager?.HideAll();
+        gameObject.SetActive(false);
+    }
+
     private void OnEnable()
     {
         RefreshInteractionState();
+        if (_loggedInPanel != null && _loggedInPanel.activeSelf)
+        {
+            RefreshMyAnimeListStatus();
+        }
     }
 
     private void OnDisable()
@@ -424,7 +688,7 @@ public class MainMenuAuthController : MonoBehaviour
         return text;
     }
 
-    private void CreateButton(Transform parent, string name, string label, Vector2 anchor, Vector2 size, Color tint, UnityAction onClick)
+    private Button CreateButton(Transform parent, string name, string label, Vector2 anchor, Vector2 size, Color tint, UnityAction onClick)
     {
         var buttonObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
         buttonObj.transform.SetParent(parent, false);
@@ -456,5 +720,7 @@ public class MainMenuAuthController : MonoBehaviour
         text.fontSize = 32;
         text.alignment = TextAnchor.MiddleCenter;
         text.color = Color.black;
+
+        return button;
     }
 }
