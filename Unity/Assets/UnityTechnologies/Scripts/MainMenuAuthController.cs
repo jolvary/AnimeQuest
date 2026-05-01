@@ -18,9 +18,11 @@ public class MainMenuAuthController : MonoBehaviour
     public UnityEvent<string, string> onLoginRequested = new UnityEvent<string, string>();
     public UnityEvent<string, string> onRegisterRequested = new UnityEvent<string, string>();
     public UnityEvent onIncognitoRequested = new UnityEvent();
+    public UnityEvent onLogoutRequested = new UnityEvent();
 
     private GameObject _loginPanel;
     private GameObject _registerPanel;
+    private GameObject _loggedInPanel;
 
     private InputField _loginUsername;
     private InputField _loginPassword;
@@ -29,6 +31,8 @@ public class MainMenuAuthController : MonoBehaviour
     private InputField _registerUsername;
     private InputField _registerPassword;
     private Text _registerStatus;
+    private InputField _malUsernameInput;
+    private Text _malImportStatus;
     private StarterAssetsInputs _playerInputs;
 
 
@@ -58,8 +62,11 @@ public class MainMenuAuthController : MonoBehaviour
 
     public void ShowLoginPanel()
     {
-        if (_loginPanel != null) _loginPanel.SetActive(true);
+        bool isLoggedIn = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated && !NakamaAuthManager.Instance.IsIncognitoSession;
+
+        if (_loginPanel != null) _loginPanel.SetActive(!isLoggedIn);
         if (_registerPanel != null) _registerPanel.SetActive(false);
+        if (_loggedInPanel != null) _loggedInPanel.SetActive(isLoggedIn);
         if (_loginStatus != null) _loginStatus.text = string.Empty;
         RefreshInteractionState();
     }
@@ -68,6 +75,7 @@ public class MainMenuAuthController : MonoBehaviour
     {
         if (_loginPanel != null) _loginPanel.SetActive(false);
         if (_registerPanel != null) _registerPanel.SetActive(true);
+        if (_loggedInPanel != null) _loggedInPanel.SetActive(false);
         if (_registerStatus != null) _registerStatus.text = string.Empty;
         RefreshInteractionState();
     }
@@ -140,8 +148,11 @@ public class MainMenuAuthController : MonoBehaviour
         _loginPanel = CreatePanel("LoginPanel", true);
         _registerPanel = CreatePanel("RegisterPanel", false);
 
+        _loggedInPanel = CreatePanel("LoggedInPanel", false);
+
         BuildLoginPanel(_loginPanel.transform);
         BuildRegisterPanel(_registerPanel.transform);
+        BuildLoggedInPanel(_loggedInPanel.transform);
     }
 
     private GameObject CreatePanel(string name, bool active)
@@ -192,6 +203,17 @@ public class MainMenuAuthController : MonoBehaviour
     }
 
 
+
+    private void BuildLoggedInPanel(Transform parent)
+    {
+        CreateHeader(parent, "MAIN MENU");
+        CreateLabel(parent, "LoggedInLabel", new Vector2(0.5f, 0.56f), new Vector2(700f, 42f), 28, Color.black, "You are already logged in.");
+        _malUsernameInput = CreateInput(parent, "MalUsernameInput", new Vector2(0.5f, 0.46f), "MyAnimeList Username...");
+        CreateButton(parent, "ImportMalButton", "Import MyAnimeList", new Vector2(0.5f, 0.34f), new Vector2(280f, 48f), new Color(0.22f, 0.62f, 0.88f), OnImportMyAnimeListPressed);
+        _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.25f), new Vector2(700f, 36f), 24, Color.black, string.Empty);
+        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.5f, 0.14f), new Vector2(240f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
+    }
+
     public void SetLoginStatus(string message)
     {
         if (_loginStatus != null)
@@ -236,6 +258,34 @@ public class MainMenuAuthController : MonoBehaviour
 
         SetRegisterStatus("Registering account...");
         onRegisterRequested?.Invoke(username, password);
+    }
+
+    private void OnLogoutPressed()
+    {
+        onLogoutRequested?.Invoke();
+    }
+
+    private async void OnImportMyAnimeListPressed()
+    {
+        string username = _malUsernameInput != null ? _malUsernameInput.text.Trim() : string.Empty;
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            if (_malImportStatus != null) _malImportStatus.text = "MAL username is required";
+            return;
+        }
+
+        try
+        {
+            if (_malImportStatus != null) _malImportStatus.text = "Importing from MyAnimeList...";
+            await ApiClient.Instance.ImportMyAnimeList(username);
+            if (_malImportStatus != null) _malImportStatus.text = "Import complete.";
+            animeCatalogPanelController?.RefreshCatalog();
+        }
+        catch (System.Exception ex)
+        {
+            if (_malImportStatus != null) _malImportStatus.text = "Import failed";
+            Debug.LogError("MAL import failed: " + ex.Message);
+        }
     }
 
     private void OnIncognitoPressed()

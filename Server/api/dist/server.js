@@ -10,6 +10,7 @@ const rate_limit_1 = __importDefault(require("@fastify/rate-limit"));
 const swagger_1 = __importDefault(require("@fastify/swagger"));
 const swagger_ui_1 = __importDefault(require("@fastify/swagger-ui"));
 const nakama_1 = require("./nakama");
+const mal_1 = require("./mal");
 const WATCH_STATUSES = ["watching", "completed", "planned", "dropped", "on_hold"];
 function toReleaseDate(year) {
     return year ? `${year}-01-01` : "unknown";
@@ -34,6 +35,38 @@ function posterUrl(row) {
 }
 function normalizeWatchStatus(value) {
     return WATCH_STATUSES.includes(value) ? value : null;
+}
+async function syncTopAnimeCatalog(ctx, maxPages = 5) {
+    const pageSize = 100;
+    for (let page = 0; page < maxPages; page += 1) {
+        const payload = await (0, mal_1.fetchTopAnimePage)({
+            clientId: ctx.env.MAL_CLIENT_ID,
+            limit: pageSize,
+            offset: page * pageSize,
+        });
+        for (const item of payload.data ?? []) {
+            const node = item.node;
+            await ctx.prisma.anime.upsert({
+                where: { provider_providerId: { provider: "myanimelist", providerId: String(node.id) } },
+                update: {
+                    title: node.title,
+                    genres: (node.genres ?? []).map((g) => g.name),
+                    episodes: node.num_episodes ?? null,
+                    year: node.start_season?.year ?? null,
+                },
+                create: {
+                    provider: "myanimelist",
+                    providerId: String(node.id),
+                    title: node.title,
+                    genres: (node.genres ?? []).map((g) => g.name),
+                    episodes: node.num_episodes ?? null,
+                    year: node.start_season?.year ?? null,
+                },
+            });
+        }
+        if (!payload.paging?.next)
+            break;
+    }
 }
 function buildServer(ctx) {
     const app = (0, fastify_1.default)({
@@ -267,6 +300,67 @@ function buildServer(ctx) {
             lists: nextStatus ? [nextStatus] : [],
         };
     });
+    app.post("/api/mal/import", async (req, reply) => {
+        const userId = req.userId;
+        const body = req.body;
+        const username = body?.username?.trim();
+        if (!username)
+            return reply.code(400).send({ error: "username is required" });
+        if (!ctx.env.MAL_ACCESS_TOKEN)
+            return reply.code(500).send({ error: "MAL_ACCESS_TOKEN not configured" });
+        let imported = 0;
+        for (let offset = 0; offset < 1000; offset += 100) {
+            const payload = await (0, mal_1.fetchUserAnimeList)({
+                clientId: ctx.env.MAL_CLIENT_ID,
+                accessToken: ctx.env.MAL_ACCESS_TOKEN,
+                username,
+                limit: 100,
+                offset,
+            });
+            for (const item of payload.data ?? []) {
+                const node = item.node;
+                const row = await ctx.prisma.anime.upsert({
+                    where: { provider_providerId: { provider: "myanimelist", providerId: String(node.id) } },
+                    update: {
+                        title: node.title,
+                        genres: (node.genres ?? []).map((g) => g.name),
+                        episodes: node.num_episodes ?? null,
+                        year: node.start_season?.year ?? null,
+                    },
+                    create: {
+                        provider: "myanimelist",
+                        providerId: String(node.id),
+                        title: node.title,
+                        genres: (node.genres ?? []).map((g) => g.name),
+                        episodes: node.num_episodes ?? null,
+                        year: node.start_season?.year ?? null,
+                    },
+                });
+                const malStatus = item.list_status?.status ?? "plan_to_watch";
+                const normalizedStatus = malStatus === "watching" ? "watching" : malStatus === "completed" ? "completed" : malStatus === "dropped" ? "dropped" : malStatus === "on_hold" ? "on_hold" : "planned";
+                await ctx.prisma.watchEntry.upsert({
+                    where: { userId_animeId: { userId, animeId: row.animeId } },
+                    update: {
+                        status: normalizedStatus,
+                        score: item.list_status?.score ?? null,
+                        episodesWatched: item.list_status?.num_episodes_watched ?? 0,
+                        updatedAt: new Date(),
+                    },
+                    create: {
+                        userId,
+                        animeId: row.animeId,
+                        status: normalizedStatus,
+                        score: item.list_status?.score ?? null,
+                        episodesWatched: item.list_status?.num_episodes_watched ?? 0,
+                    },
+                });
+                imported += 1;
+            }
+            if (!payload.paging?.next)
+                break;
+        }
+        return { ok: true, imported };
+    });
     // List quests
     app.get("/api/quests", async () => {
         const quests = await ctx.prisma.quest.findMany({
@@ -352,5 +446,16 @@ function buildServer(ctx) {
             offset,
         };
     });
+    const runCatalogSync = async () => {
+        try {
+            await syncTopAnimeCatalog(ctx);
+            app.log.info("MAL catalog sync completed");
+        }
+        catch (error) {
+            app.log.error({ error }, "MAL catalog sync failed");
+        }
+    };
+    runCatalogSync();
+    setInterval(runCatalogSync, Math.max(ctx.env.MAL_SYNC_INTERVAL_MINUTES, 5) * 60 * 1000);
     return app;
 }

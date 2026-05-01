@@ -20,6 +20,8 @@ public class GameBootstrap : MonoBehaviour
             mainMenuAuthController.gameObject.SetActive(true);
             mainMenuAuthController.onLoginRequested.AddListener(HandleLoginRequested);
             mainMenuAuthController.onRegisterRequested.AddListener(HandleRegisterRequested);
+            mainMenuAuthController.onIncognitoRequested.AddListener(HandleIncognitoRequested);
+            mainMenuAuthController.onLogoutRequested.AddListener(HandleLogoutRequested);
         }
 
         try
@@ -82,6 +84,58 @@ public class GameBootstrap : MonoBehaviour
             string message = "Register failed: " + ex.Message;
             Debug.LogError(message);
             mainMenuAuthController?.SetRegisterStatus(message);
+        }
+    }
+
+
+    private async void HandleIncognitoRequested()
+    {
+        try
+        {
+            if (NakamaAuthManager.Instance != null && !NakamaAuthManager.Instance.IsAuthenticated)
+            {
+                await NakamaAuthManager.Instance.LoginDeviceAsync();
+                await ApiClient.Instance.PostEnsureMe();
+            }
+
+            mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(true);
+            uiManager?.OpenAnimePanel();
+        }
+        catch (Exception ex)
+        {
+            string message = "Incognito login failed: " + ex.Message;
+            Debug.LogError(message);
+            mainMenuAuthController?.SetLoginStatus(message);
+            if (mainMenuAuthController != null)
+            {
+                mainMenuAuthController.gameObject.SetActive(true);
+                mainMenuAuthController.ShowLoginPanel();
+            }
+        }
+    }
+
+    private async void HandleLogoutRequested()
+    {
+        try
+        {
+            if (NakamaAuthManager.Instance != null)
+            {
+                await NakamaAuthManager.Instance.LogoutAsync();
+            }
+
+            uiManager?.HideAll();
+            if (mainMenuAuthController != null)
+            {
+                mainMenuAuthController.gameObject.SetActive(true);
+                mainMenuAuthController.ShowLoginPanel();
+                mainMenuAuthController.SetLoginStatus("You have been logged out.");
+            }
+        }
+        catch (Exception ex)
+        {
+            string message = "Logout failed: " + ex.Message;
+            Debug.LogError(message);
+            mainMenuAuthController?.SetLoginStatus(message);
         }
     }
 
