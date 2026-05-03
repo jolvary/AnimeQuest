@@ -50,6 +50,11 @@ type AnimeDeckSourceRow = {
   provider: string;
   providerId: string;
 };
+type AnimeWatchState = {
+  status?: string | null;
+  score?: number | null;
+  episodesWatched?: number | null;
+};
 type AnimeListRow = Prisma.AnimeGetPayload<{
   select: {
     animeId: true;
@@ -65,6 +70,8 @@ type AnimeListRow = Prisma.AnimeGetPayload<{
     watchEntries: {
       select: {
         status: true;
+        score: true;
+        episodesWatched: true;
       };
     };
   };
@@ -104,11 +111,21 @@ type AnimeDeckItem = {
   releaseDate: string;
   isWatching: boolean;
   watchStatus: WatchStatus | null;
+  score: number | null;
+  episodesWatched: number;
   lists: string[];
   genres: string[];
   trailerYoutubeId: string | null;
   provider: string;
   providerId: string;
+  matchCount?: number;
+  matchingUsers?: {
+    userId: string;
+    displayName: string;
+    status: WatchStatus | null;
+    score: number | null;
+    episodesWatched: number;
+  }[];
 };
 
 declare module "fastify" {
@@ -183,6 +200,7 @@ function normalizeMalWatchStatus(value?: string): WatchStatus {
   if (value === "completed") return "completed";
   if (value === "dropped") return "dropped";
   if (value === "on_hold") return "on_hold";
+  if (value === "plan_to_watch" || value === "planned") return "planned";
   return "planned";
 }
 
@@ -197,8 +215,8 @@ function animeUpsertData(node: MalAnimeNode) {
   };
 }
 
-function buildAnimeDeckItem(row: AnimeDeckSourceRow, rawWatchStatus: string | null | undefined): AnimeDeckItem {
-  const watchStatus = normalizeWatchStatus(rawWatchStatus ?? "");
+function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | null): AnimeDeckItem {
+  const watchStatus = normalizeWatchStatus(watch?.status ?? "");
 
   return {
     id: row.animeId.toString(),
@@ -210,6 +228,8 @@ function buildAnimeDeckItem(row: AnimeDeckSourceRow, rawWatchStatus: string | nu
     releaseDate: toReleaseDate(row.year),
     isWatching: watchStatus === "watching",
     watchStatus,
+    score: watch?.score ?? null,
+    episodesWatched: watch?.episodesWatched ?? 0,
     lists: watchStatus ? [watchStatus] : [],
     genres: row.genres,
     trailerYoutubeId: row.trailerYoutubeId,
@@ -225,6 +245,10 @@ function parseAnimeListQuery(query: { q?: string; limit?: string; offset?: strin
   const limit = Math.min(Math.max(requestedLimit, 1), MAX_ANIME_LIMIT);
   const offset = Math.max(requestedOffset, 0);
   return { q, limit, offset };
+}
+
+function incrementCount(counts: Record<string, number>, key: string) {
+  counts[key] = (counts[key] ?? 0) + 1;
 }
 
 function isMalOAuthConfigured(ctx: AppContext) {
@@ -562,7 +586,7 @@ export function buildServer(ctx: AppContext) {
         providerId: true,
         watchEntries: {
           where: { userId },
-          select: { status: true },
+          select: { status: true, score: true, episodesWatched: true },
           take: 1,
         },
       },
@@ -572,7 +596,7 @@ export function buildServer(ctx: AppContext) {
     req.log.info({ userId, count: pageRows.length, search: q ?? "", limit, offset, hasMore }, "[Dozzle][DB] global anime catalog query");
 
     return {
-      items: pageRows.map((row) => buildAnimeDeckItem(row, row.watchEntries[0]?.status)),
+      items: pageRows.map((row) => buildAnimeDeckItem(row, row.watchEntries[0])),
       limit,
       offset,
       hasMore,
@@ -600,6 +624,8 @@ export function buildServer(ctx: AppContext) {
       take: limit + 1,
       select: {
         status: true,
+        score: true,
+        episodesWatched: true,
         anime: {
           select: {
             animeId: true,
@@ -621,11 +647,103 @@ export function buildServer(ctx: AppContext) {
     req.log.info({ userId, count: pageRows.length, search: q ?? "", limit, offset, hasMore }, "[Dozzle][DB] user anime catalog query");
 
     return {
-      items: pageRows.map((row) => buildAnimeDeckItem(row.anime, row.status)),
+      items: pageRows.map((row) => buildAnimeDeckItem(row.anime, row)),
       limit,
       offset,
       hasMore,
     };
+  });
+
+  app.get("/api/anime/matches", async (req) => {
+    const userId = req.userId!;
+    const { q, limit } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
+
+    const currentEntries = await ctx.prisma.watchEntry.findMany({
+      where: {
+        userId,
+        anime: q
+          ? {
+              title: {
+                contains: q,
+                mode: "insensitive",
+              },
+            }
+          : undefined,
+      },
+      select: {
+        animeId: true,
+        status: true,
+        score: true,
+        episodesWatched: true,
+        anime: {
+          select: {
+            animeId: true,
+            title: true,
+            imageUrl: true,
+            synopsis: true,
+            year: true,
+            episodes: true,
+            genres: true,
+            trailerYoutubeId: true,
+            provider: true,
+            providerId: true,
+          },
+        },
+      },
+    });
+
+    const animeIds = currentEntries.map((entry) => entry.animeId);
+    if (animeIds.length === 0) {
+      req.log.info({ userId, count: 0 }, "[Dozzle][DB] anime matching query");
+      return { items: [] };
+    }
+
+    const currentByAnime = new Map(currentEntries.map((entry) => [entry.animeId, entry]));
+    const otherEntries = await ctx.prisma.watchEntry.findMany({
+      where: {
+        animeId: { in: animeIds },
+        userId: { not: userId },
+      },
+      select: {
+        animeId: true,
+        status: true,
+        score: true,
+        episodesWatched: true,
+        user: {
+          select: {
+            userId: true,
+            displayName: true,
+          },
+        },
+      },
+    });
+
+    const matchesByAnime = new Map<string, typeof otherEntries>();
+    for (const entry of otherEntries) {
+      const existing = matchesByAnime.get(entry.animeId) ?? [];
+      existing.push(entry);
+      matchesByAnime.set(entry.animeId, existing);
+    }
+
+    const items = [...matchesByAnime.entries()]
+      .map(([animeId, matches]) => {
+        const current = currentByAnime.get(animeId)!;
+        const item = buildAnimeDeckItem(current.anime, current);
+        item.matchCount = matches.length;
+        item.matchingUsers = matches.slice(0, 5).map((match) => ({
+          userId: match.user.userId,
+          displayName: match.user.displayName,
+          status: normalizeWatchStatus(match.status),
+          score: match.score,
+          episodesWatched: match.episodesWatched,
+        }));
+        return item;
+      })
+      .sort((a, b) => (b.matchCount ?? 0) - (a.matchCount ?? 0) || a.title.localeCompare(b.title))
+      .slice(0, limit);
+
+    req.log.info({ userId, count: items.length, searchedAnime: animeIds.length, matchedEntries: otherEntries.length }, "[Dozzle][DB] anime matching query");
+    return { items };
   });
 
   app.patch("/api/anime/:id/watching", async (req, reply) => {
@@ -666,6 +784,8 @@ export function buildServer(ctx: AppContext) {
       id: watchEntry.animeId,
       isWatching: watchEntry.status === "watching",
       watchStatus: watchEntry.status,
+      score: watchEntry.score,
+      episodesWatched: watchEntry.episodesWatched,
       lists: [watchEntry.status],
     };
   });
@@ -749,6 +869,8 @@ export function buildServer(ctx: AppContext) {
       id: params.id,
       isWatching: nextStatus === "watching",
       watchStatus: nextStatus,
+      score: nextEntry?.score ?? null,
+      episodesWatched: nextEntry?.episodesWatched ?? 0,
       lists: nextStatus ? [nextStatus] : [],
     };
   });
@@ -836,7 +958,10 @@ export function buildServer(ctx: AppContext) {
 
     try {
       let imported = 0;
+      let scoredEntries = 0;
+      let episodeProgressEntries = 0;
       const statusCounts: Record<string, number> = {};
+      const rawStatusCounts: Record<string, number> = {};
       for (let offset = 0; ; offset += 100) {
         const payload = await fetchUserAnimeList({
           clientId: ctx.env.MAL_CLIENT_ID!,
@@ -846,6 +971,7 @@ export function buildServer(ctx: AppContext) {
           offset,
         });
 
+        const pageRawStatusCounts: Record<string, number> = {};
         for (const item of payload.data ?? []) {
           const node = item.node;
           const data = animeUpsertData(node);
@@ -859,34 +985,45 @@ export function buildServer(ctx: AppContext) {
             },
           });
 
-          const status = normalizeMalWatchStatus(item.list_status?.status);
-          statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+          const rawStatus = item.list_status?.status ?? "missing";
+          const status = normalizeMalWatchStatus(rawStatus);
+          const score = item.list_status?.score ?? null;
+          const episodesWatched = item.list_status?.num_episodes_watched ?? 0;
+          incrementCount(rawStatusCounts, rawStatus);
+          incrementCount(pageRawStatusCounts, rawStatus);
+          incrementCount(statusCounts, status);
+          if (score != null && score > 0) scoredEntries += 1;
+          if (episodesWatched > 0) episodeProgressEntries += 1;
 
           await ctx.prisma.watchEntry.upsert({
             where: { userId_animeId: { userId, animeId: row.animeId } },
             update: {
               status,
-              score: item.list_status?.score ?? null,
-              episodesWatched: item.list_status?.num_episodes_watched ?? 0,
+              score,
+              episodesWatched,
               updatedAt: new Date(),
             },
             create: {
               userId,
               animeId: row.animeId,
               status,
-              score: item.list_status?.score ?? null,
-              episodesWatched: item.list_status?.num_episodes_watched ?? 0,
+              score,
+              episodesWatched,
             },
           });
 
           imported += 1;
         }
 
+        req.log.info({ userId, offset, pageCount: payload.data?.length ?? 0, pageRawStatusCounts }, "[Dozzle][MAL] import page parsed");
         if (!payload.paging?.next) break;
       }
 
-      req.log.info({ userId, imported, statusCounts }, "[Dozzle][MAL] import completed and watch statuses replicated");
-      return { ok: true, imported, statusCounts };
+      req.log.info(
+        { userId, imported, statusCounts, rawStatusCounts, scoredEntries, episodeProgressEntries },
+        "[Dozzle][MAL] import completed and watch statuses replicated"
+      );
+      return { ok: true, imported, statusCounts, rawStatusCounts, scoredEntries, episodeProgressEntries };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       req.log.error({ userId, error }, "[Dozzle][MAL] import failed");

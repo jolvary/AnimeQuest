@@ -115,6 +115,18 @@ public class ApiClient : MonoBehaviour
         return req.downloadHandler.text;
     }
 
+    public async Task<string> GetAnimeMatches(string q = "", int limit = 100)
+    {
+        string url = $"{baseUrl}/api/anime/matches?q={UnityWebRequest.EscapeURL(q)}&limit={limit}";
+        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
     public async Task<string> GetQuests()
     {
         var req = CreateRequest($"{baseUrl}/api/quests", UnityWebRequest.kHttpVerbGET);

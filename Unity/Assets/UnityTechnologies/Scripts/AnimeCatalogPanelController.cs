@@ -8,6 +8,9 @@ public class AnimeCatalogPanelController : MonoBehaviour
 {
     private static readonly string[] StatusLabels = { "Not in your list", "Watching", "Completed", "Planned", "Dropped", "On Hold" };
     private static readonly string[] StatusValues = { "", "watching", "completed", "planned", "dropped", "on_hold" };
+    private static readonly Color DeckSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.22f);
+    private static readonly Color DeckInputColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
+    private static readonly Color DeckOverlayColor = new Color(0.96f, 0.90f, 0.78f, 0.28f);
 
     public string defaultSearch = "";
     public int defaultLimit = 100;
@@ -206,7 +209,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         layout.flexibleWidth = 1f;
 
         var image = inputObj.GetComponent<Image>();
-        image.color = new Color(0.96f, 0.92f, 0.82f, 1f);
+        image.color = DeckInputColor;
 
         var input = inputObj.GetComponent<InputField>();
         input.text = defaultSearch ?? string.Empty;
@@ -443,7 +446,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         cardRect.sizeDelta = new Vector2(0f, 236f);
 
         var cardImage = card.GetComponent<Image>();
-        cardImage.color = new Color(1f, 1f, 1f, 0.92f);
+        cardImage.color = DeckSurfaceColor;
 
         var cardLayout = card.GetComponent<LayoutElement>();
         cardLayout.minHeight = 236f;
@@ -517,6 +520,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
         string statusLabel = userCatalogOnly ? "Status" : "Your status";
         CreateLabel(infoObj.transform, $"{statusLabel}: {FormatWatchStatus(item.watchStatus)}", 13, FontStyle.Bold, TextAnchor.UpperLeft);
+        CreateLabel(infoObj.transform, $"Watched: {FormatWatchedEpisodes(item.episodesWatched, item.episodes)}  |  Score: {FormatScore(item.score)}", 13, FontStyle.Normal, TextAnchor.UpperLeft);
 
         CreateExpandedDescription(infoObj.transform, Safe(item.description));
     }
@@ -533,7 +537,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         layout.flexibleHeight = 0f;
 
         var image = viewportObj.GetComponent<Image>();
-        image.color = new Color(0.96f, 0.92f, 0.82f, 0.60f);
+        image.color = DeckOverlayColor;
         viewportObj.GetComponent<Mask>().showMaskGraphic = true;
 
         var viewportRect = viewportObj.GetComponent<RectTransform>();
@@ -855,18 +859,54 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
     private System.Collections.IEnumerator LoadPoster(string url, RawImage target)
     {
+        yield return TryLoadPoster(url, target);
+        if (target == null || target.texture != null) yield break;
+
+        string fallbackUrl = BuildPosterFallbackUrl(url);
+        if (!string.IsNullOrWhiteSpace(fallbackUrl))
+        {
+            DozzleLogger.Action("Anime poster retry", $"url={url};fallback={fallbackUrl}");
+            yield return TryLoadPoster(fallbackUrl, target);
+        }
+
+        if (target != null && target.texture == null)
+        {
+            DozzleLogger.Error("Anime poster load failed", url);
+        }
+    }
+
+    private System.Collections.IEnumerator TryLoadPoster(string url, RawImage target)
+    {
         using (var req = UnityWebRequestTexture.GetTexture(url))
         {
             yield return req.SendWebRequest();
-            if (req.result != UnityWebRequest.Result.Success) yield break;
+            if (target == null || req.result != UnityWebRequest.Result.Success) yield break;
 
-            var texture = DownloadHandlerTexture.GetContent(req);
+            Texture2D texture = null;
+            try
+            {
+                texture = DownloadHandlerTexture.GetContent(req);
+            }
+            catch
+            {
+                texture = null;
+            }
+
             if (texture != null)
             {
                 target.texture = texture;
                 target.color = Color.white;
             }
         }
+    }
+
+    private static string BuildPosterFallbackUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        const string webpExtension = ".webp";
+        int index = url.IndexOf(webpExtension, StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        return url.Substring(0, index) + ".jpg" + url.Substring(index + webpExtension.Length);
     }
 
     private Text CreateTextElement(string name, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, int size, FontStyle style)
@@ -995,6 +1035,17 @@ public class AnimeCatalogPanelController : MonoBehaviour
         return episodes <= 0 ? "?" : episodes.ToString();
     }
 
+    private static string FormatWatchedEpisodes(int watched, int total)
+    {
+        string watchedText = watched <= 0 ? "0" : watched.ToString();
+        return total > 0 ? $"{watchedText}/{total}" : watchedText;
+    }
+
+    private static string FormatScore(int score)
+    {
+        return score <= 0 ? "-" : score.ToString();
+    }
+
     private static string FormatWatchStatus(string status)
     {
         if (string.IsNullOrWhiteSpace(status)) return "Not in your list";
@@ -1030,6 +1081,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         public string releaseDate;
         public bool isWatching;
         public string watchStatus;
+        public int score;
+        public int episodesWatched;
         public string[] lists;
         public string[] genres;
         public string trailerYoutubeId;

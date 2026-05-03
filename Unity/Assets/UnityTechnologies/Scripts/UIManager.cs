@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using StarterAssets;
 #if UNITY_EDITOR
 using UnityEditor;
@@ -14,12 +15,16 @@ public class UIManager : MonoBehaviour
     public GameObject questsPanel;
     public GameObject animePanel;
     public GameObject userCatalogPanel;
+    public GameObject matchingPanel;
     public GameObject tablePanel;
 
     [Header("Controllers")]
+    public NakamaChatPanelController chatPanelController;
+    public NakamaFriendsPanelController friendsPanelController;
     public QuestPanelController questPanelController;
     public AnimeCatalogPanelController animeCatalogPanelController;
     public AnimeCatalogPanelController userCatalogPanelController;
+    public MatchingPanelController matchingPanelController;
     public TableViewerPanelController tableViewerPanelController;
 
     [Header("Visuals")]
@@ -40,7 +45,10 @@ public class UIManager : MonoBehaviour
         }
 
         ResolvePreferredFont();
+        EnsureChatPanel();
+        EnsureFriendsPanel();
         EnsureUserCatalogPanel();
+        EnsureMatchingPanel();
         ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
@@ -49,14 +57,15 @@ public class UIManager : MonoBehaviour
 
     private void Update()
     {
-        if (Keyboard.current == null) return;
+        if (Keyboard.current == null || IsTextInputFocused()) return;
 
-        if (Keyboard.current.digit1Key.wasPressedThisFrame) ToggleExclusive(chatPanel);
-        if (Keyboard.current.digit2Key.wasPressedThisFrame) ToggleExclusive(friendsPanel);
-        if (Keyboard.current.digit3Key.wasPressedThisFrame) OpenQuestsPanel();
-        if (Keyboard.current.digit4Key.wasPressedThisFrame) OpenAnimePanel();
-        if (Keyboard.current.digit5Key.wasPressedThisFrame) OpenUserCatalogPanel();
-        if (Keyboard.current.digit6Key.wasPressedThisFrame) OpenTablePanel("all");
+        if (Keyboard.current.f1Key.wasPressedThisFrame) OpenChatPanel();
+        if (Keyboard.current.f2Key.wasPressedThisFrame) OpenFriendsPanel();
+        if (Keyboard.current.f3Key.wasPressedThisFrame) OpenQuestsPanel();
+        if (Keyboard.current.f4Key.wasPressedThisFrame) OpenAnimePanel();
+        if (Keyboard.current.f5Key.wasPressedThisFrame) OpenUserCatalogPanel();
+        if (Keyboard.current.f6Key.wasPressedThisFrame) OpenMatchingPanel();
+        if (Keyboard.current.f7Key.wasPressedThisFrame) OpenTablePanel("all");
     }
 
     public void OpenQuestsPanel()
@@ -81,6 +90,13 @@ public class UIManager : MonoBehaviour
         userCatalogPanelController?.RefreshCatalog();
     }
 
+    public void OpenMatchingPanel()
+    {
+        EnsureMatchingPanel();
+        ToggleExclusive(matchingPanel);
+        matchingPanelController?.RefreshMatches();
+    }
+
     public void OpenTablePanel(string tableName)
     {
         ToggleExclusive(tablePanel);
@@ -89,12 +105,35 @@ public class UIManager : MonoBehaviour
 
     public void OpenChatPanel()
     {
-        ToggleExclusive(chatPanel);
+        EnsureChatPanel();
+        bool isOpening = ToggleExclusive(chatPanel);
+        if (isOpening)
+        {
+            chatPanelController?.OpenGeneralChat();
+        }
+    }
+
+    public void OpenChatPanelForUser(string userId, string username)
+    {
+        EnsureChatPanel();
+        HideAll();
+        if (chatPanel != null)
+        {
+            chatPanel.SetActive(true);
+        }
+
+        RefreshCursorState();
+        chatPanelController?.OpenDirectMessage(userId, username);
     }
 
     public void OpenFriendsPanel()
     {
-        ToggleExclusive(friendsPanel);
+        EnsureFriendsPanel();
+        bool isOpening = ToggleExclusive(friendsPanel);
+        if (isOpening)
+        {
+            friendsPanelController?.RefreshFriends();
+        }
     }
 
     public void HideAll()
@@ -104,6 +143,7 @@ public class UIManager : MonoBehaviour
         if (questsPanel) questsPanel.SetActive(false);
         if (animePanel) animePanel.SetActive(false);
         if (userCatalogPanel) userCatalogPanel.SetActive(false);
+        if (matchingPanel) matchingPanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
 
         RefreshCursorState();
@@ -126,6 +166,84 @@ public class UIManager : MonoBehaviour
 
         RefreshCursorState();
         return isOpening;
+    }
+
+    private void EnsureChatPanel()
+    {
+        if (chatPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_Chat") : null;
+            if (existing == null && parent != null)
+            {
+                existing = parent.Find("ChatPanel");
+            }
+
+            if (existing != null)
+            {
+                chatPanel = existing.gameObject;
+            }
+        }
+
+        if (chatPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            chatPanel = new GameObject("Panel_Chat", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(NakamaChatPanelController));
+            chatPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(chatPanel);
+        }
+
+        if (chatPanelController == null)
+        {
+            chatPanelController = chatPanel.GetComponent<NakamaChatPanelController>();
+        }
+
+        if (chatPanelController == null)
+        {
+            chatPanelController = chatPanel.AddComponent<NakamaChatPanelController>();
+        }
+
+        chatPanelController.ConfigureFont(panelTitleFont);
+        chatPanel.SetActive(false);
+    }
+
+    private void EnsureFriendsPanel()
+    {
+        if (friendsPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_Friends") : null;
+            if (existing == null && parent != null)
+            {
+                existing = parent.Find("FriendsPanel");
+            }
+
+            if (existing != null)
+            {
+                friendsPanel = existing.gameObject;
+            }
+        }
+
+        if (friendsPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            friendsPanel = new GameObject("Panel_Friends", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(NakamaFriendsPanelController));
+            friendsPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(friendsPanel);
+        }
+
+        if (friendsPanelController == null)
+        {
+            friendsPanelController = friendsPanel.GetComponent<NakamaFriendsPanelController>();
+        }
+
+        if (friendsPanelController == null)
+        {
+            friendsPanelController = friendsPanel.AddComponent<NakamaFriendsPanelController>();
+        }
+
+        friendsPanelController.Configure(this, panelTitleFont);
+        friendsPanel.SetActive(false);
     }
 
     private void EnsureUserCatalogPanel()
@@ -163,6 +281,42 @@ public class UIManager : MonoBehaviour
         userCatalogPanelController.defaultLimit = 100;
         userCatalogPanelController.ConfigureFont(panelTitleFont);
         userCatalogPanel.SetActive(false);
+    }
+
+    private void EnsureMatchingPanel()
+    {
+        if (matchingPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_Matching") : null;
+            if (existing != null)
+            {
+                matchingPanel = existing.gameObject;
+            }
+        }
+
+        if (matchingPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            matchingPanel = new GameObject("Panel_Matching", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(MatchingPanelController));
+            matchingPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(matchingPanel);
+        }
+
+        if (matchingPanelController == null)
+        {
+            matchingPanelController = matchingPanel.GetComponent<MatchingPanelController>();
+        }
+
+        if (matchingPanelController == null)
+        {
+            matchingPanelController = matchingPanel.AddComponent<MatchingPanelController>();
+        }
+
+        matchingPanel.name = "Panel_Matching";
+        matchingPanelController.defaultLimit = 100;
+        matchingPanelController.ConfigureFont(panelTitleFont);
+        matchingPanel.SetActive(false);
     }
 
     private Transform ResolvePanelParent()
@@ -215,6 +369,7 @@ public class UIManager : MonoBehaviour
         ApplyPanelSprite(questsPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(animePanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(userCatalogPanel, fantasyWoodenBoardSprite);
+        ApplyPanelSprite(matchingPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(tablePanel, fantasyWoodenBoardSprite);
     }
 
@@ -237,6 +392,7 @@ public class UIManager : MonoBehaviour
         AddCloseButton(questsPanel);
         AddCloseButton(animePanel);
         AddCloseButton(userCatalogPanel);
+        AddCloseButton(matchingPanel);
         AddCloseButton(tablePanel);
         AddWeeklyQuestTitle();
     }
@@ -301,7 +457,14 @@ public class UIManager : MonoBehaviour
                (questsPanel && questsPanel.activeSelf) ||
                (animePanel && animePanel.activeSelf) ||
                (userCatalogPanel && userCatalogPanel.activeSelf) ||
+               (matchingPanel && matchingPanel.activeSelf) ||
                (tablePanel && tablePanel.activeSelf);
+    }
+
+    private static bool IsTextInputFocused()
+    {
+        if (EventSystem.current == null || EventSystem.current.currentSelectedGameObject == null) return false;
+        return EventSystem.current.currentSelectedGameObject.GetComponent<InputField>() != null;
     }
 
     private void AddWeeklyQuestTitle()
@@ -337,6 +500,8 @@ public class UIManager : MonoBehaviour
 
     private void ConfigurePanelControllers()
     {
+        chatPanelController?.ConfigureFont(panelTitleFont);
+        friendsPanelController?.Configure(this, panelTitleFont);
         questPanelController?.ConfigureFont(panelTitleFont);
         animeCatalogPanelController?.ConfigureFont(panelTitleFont);
         if (animeCatalogPanelController != null)
@@ -349,6 +514,11 @@ public class UIManager : MonoBehaviour
         {
             userCatalogPanelController.userCatalogOnly = true;
             userCatalogPanelController.defaultLimit = 100;
+        }
+        matchingPanelController?.ConfigureFont(panelTitleFont);
+        if (matchingPanelController != null)
+        {
+            matchingPanelController.defaultLimit = 100;
         }
         tableViewerPanelController?.ConfigureFont(panelTitleFont);
     }

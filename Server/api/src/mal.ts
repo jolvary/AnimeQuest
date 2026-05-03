@@ -120,7 +120,7 @@ export async function fetchCurrentMalUser(params: { clientId: string; accessToke
 }
 
 export async function fetchUserAnimeList(params: { clientId: string; accessToken?: string; username: string; limit: number; offset: number }) {
-  const fields = `${ANIME_FIELDS},my_list_status`;
+  const fields = `${ANIME_FIELDS},list_status`;
   const usernamePath = encodeMalUsernamePath(params.username);
   const url = `${MAL_API_BASE}/users/${usernamePath}/animelist?limit=${params.limit}&offset=${params.offset}&fields=${encodeURIComponent(fields)}`;
   const response = await fetch(url, { headers: authHeaders(params.clientId, params.accessToken) });
