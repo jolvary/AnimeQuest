@@ -40,6 +40,7 @@ public class MainMenuAuthController : MonoBehaviour
     private StarterAssetsInputs _playerInputs;
     private bool _isMalLinked;
     private bool _isPollingMalLink;
+    private bool _authRequestInProgress;
 
 
     private void Awake()
@@ -74,17 +75,24 @@ public class MainMenuAuthController : MonoBehaviour
         if (_loginPanel != null) _loginPanel.SetActive(!isLoggedIn);
         if (_registerPanel != null) _registerPanel.SetActive(false);
         if (_loggedInPanel != null) _loggedInPanel.SetActive(isLoggedIn);
-        if (_loginStatus != null) _loginStatus.text = string.Empty;
+        if (_loginStatus != null && !_authRequestInProgress) _loginStatus.text = string.Empty;
         RefreshInteractionState();
 
         if (isLoggedIn)
         {
+            _authRequestInProgress = false;
             RefreshMyAnimeListStatus();
         }
     }
 
     public void ShowRegisterPanel()
     {
+        if (_authRequestInProgress)
+        {
+            SetLoginStatus("Please wait for login to finish.");
+            return;
+        }
+
         if (_loginPanel != null) _loginPanel.SetActive(false);
         if (_registerPanel != null) _registerPanel.SetActive(true);
         if (_loggedInPanel != null) _loggedInPanel.SetActive(false);
@@ -296,6 +304,9 @@ public class MainMenuAuthController : MonoBehaviour
         {
             _loginStatus.text = message ?? string.Empty;
         }
+
+        ShowStatusErrorIfNeeded(message);
+        UpdateAuthProgressFromStatus(message);
     }
 
     public void SetRegisterStatus(string message)
@@ -303,6 +314,38 @@ public class MainMenuAuthController : MonoBehaviour
         if (_registerStatus != null)
         {
             _registerStatus.text = message ?? string.Empty;
+        }
+
+        ShowStatusErrorIfNeeded(message);
+        UpdateAuthProgressFromStatus(message);
+    }
+
+    private void ShowStatusErrorIfNeeded(string message)
+    {
+        if (!IsErrorStatus(message)) return;
+        uiManager?.ShowErrorAlert(message);
+    }
+
+    private static bool IsErrorStatus(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return false;
+
+        string normalized = message.Trim().ToLowerInvariant();
+        return normalized.Contains("failed") ||
+               normalized.Contains("wrong") ||
+               normalized.Contains("required") ||
+               normalized.Contains("unavailable") ||
+               normalized.Contains("reconnect") ||
+               normalized.Contains("error");
+    }
+
+    private void UpdateAuthProgressFromStatus(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return;
+        string normalized = message.Trim().ToLowerInvariant();
+        if (normalized.Contains("failed") || normalized.Contains("successful") || normalized.Contains("ready") || normalized.Contains("logged out") || normalized.Contains("required") || normalized.Contains("wrong") || normalized.Contains("error") || normalized.Contains("unavailable"))
+        {
+            _authRequestInProgress = false;
         }
     }
 
@@ -313,10 +356,12 @@ public class MainMenuAuthController : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            _loginStatus.text = "WRONG USERNAME OR PASSWORD";
+            _authRequestInProgress = false;
+            SetLoginStatus("WRONG USERNAME OR PASSWORD");
             return;
         }
 
+        _authRequestInProgress = true;
         SetLoginStatus("Login requested...");
         DozzleLogger.Action("Login requested", $"username={username}");
         onLoginRequested?.Invoke(username, password);
@@ -329,10 +374,12 @@ public class MainMenuAuthController : MonoBehaviour
 
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
-            _registerStatus.text = "USERNAME AND PASSWORD REQUIRED";
+            _authRequestInProgress = false;
+            SetRegisterStatus("USERNAME AND PASSWORD REQUIRED");
             return;
         }
 
+        _authRequestInProgress = true;
         SetRegisterStatus("Registering account...");
         DozzleLogger.Action("Register requested", $"username={username}");
         onRegisterRequested?.Invoke(username, password);
@@ -340,6 +387,7 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnLogoutPressed()
     {
+        _authRequestInProgress = false;
         DozzleLogger.Action("Logout requested");
         onLogoutRequested?.Invoke();
     }
@@ -530,6 +578,13 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnIncognitoPressed()
     {
+        if (_authRequestInProgress)
+        {
+            SetLoginStatus("Please wait for login to finish.");
+            DozzleLogger.Action("Incognito blocked", "auth request in progress");
+            return;
+        }
+
         DozzleLogger.Action("Incognito requested from main menu");
         if (animeCatalogPanelController != null)
         {
@@ -548,6 +603,13 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnClosePressed()
     {
+        if (_authRequestInProgress)
+        {
+            SetLoginStatus("Please wait for login to finish.");
+            DozzleLogger.Action("Main menu close blocked", "auth request in progress");
+            return;
+        }
+
         bool isLoggedIn = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated && !NakamaAuthManager.Instance.IsIncognitoSession;
         DozzleLogger.Action("Main menu close pressed", $"isLoggedIn={isLoggedIn}");
 
@@ -572,8 +634,9 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnDisable()
     {
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        bool canLockPointer = CanUsePointerLock();
+        Cursor.lockState = canLockPointer ? CursorLockMode.Locked : CursorLockMode.None;
+        Cursor.visible = !canLockPointer;
         SetPlayerMovementEnabled(true);
     }
 
@@ -597,8 +660,9 @@ public class MainMenuAuthController : MonoBehaviour
             if (_playerInputs == null) return;
         }
 
-        _playerInputs.cursorLocked = enabled;
-        _playerInputs.cursorInputForLook = enabled;
+        bool pointerLookEnabled = enabled && CanUsePointerLock();
+        _playerInputs.cursorLocked = pointerLookEnabled;
+        _playerInputs.cursorInputForLook = pointerLookEnabled;
         _playerInputs.movementInputEnabled = enabled;
 
         if (!enabled)
@@ -608,6 +672,16 @@ public class MainMenuAuthController : MonoBehaviour
             _playerInputs.JumpInput(false);
             _playerInputs.SprintInput(false);
         }
+    }
+
+    private static bool CanUsePointerLock()
+    {
+        if (Application.isMobilePlatform) return false;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        return false;
+#else
+        return true;
+#endif
     }
 
     private InputField CreateInput(Transform parent, string name, Vector2 anchor, string placeholderText, bool isPassword = false)

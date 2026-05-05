@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
@@ -30,12 +32,36 @@ public class UIManager : MonoBehaviour
     [Header("Visuals")]
     public Sprite fantasyWoodenBoardSprite;
     public Sprite closeButtonSprite;
+    public Sprite errorExclamationSprite;
     public Font panelTitleFont;
 
     [Header("Input")]
     public StarterAssetsInputs playerInputs;
 
+    [Header("Mobile")]
+    public bool forceMobileControlsInEditor;
+
     private bool _isUiInteractionEnabled;
+    private GameObject _panelToolbar;
+    private GameObject _mobileControls;
+    private GameObject _webGlPointerLockOverlay;
+    private bool _webGlPointerLockReady;
+    private float _webGlPointerLockRequestedAt;
+    private GameObject _errorAlert;
+    private Text _errorAlertText;
+    private float _hideErrorAlertAt;
+    private readonly Queue<string> _pendingErrorAlerts = new Queue<string>();
+    private readonly object _pendingErrorAlertLock = new object();
+
+    private void OnEnable()
+    {
+        DozzleLogger.ErrorReported += QueueErrorAlert;
+    }
+
+    private void OnDisable()
+    {
+        DozzleLogger.ErrorReported -= QueueErrorAlert;
+    }
 
     private void Start()
     {
@@ -52,20 +78,29 @@ public class UIManager : MonoBehaviour
         ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
+        EnsurePanelToolbar();
+        EnsureMobileControls();
+        EnsureWebGlPointerLockOverlay();
+        EnsureErrorAlert();
         HideAll();
+        RefreshOverlayVisibility();
     }
 
     private void Update()
     {
+        UpdateErrorAlert();
+        MaintainWebGlPointerLockState();
+        RefreshOverlayVisibility();
+
         if (Keyboard.current == null || IsTextInputFocused()) return;
 
-        if (Keyboard.current.f1Key.wasPressedThisFrame) OpenChatPanel();
-        if (Keyboard.current.f2Key.wasPressedThisFrame) OpenFriendsPanel();
-        if (Keyboard.current.f3Key.wasPressedThisFrame) OpenQuestsPanel();
-        if (Keyboard.current.f4Key.wasPressedThisFrame) OpenAnimePanel();
-        if (Keyboard.current.f5Key.wasPressedThisFrame) OpenUserCatalogPanel();
-        if (Keyboard.current.f6Key.wasPressedThisFrame) OpenMatchingPanel();
-        if (Keyboard.current.f7Key.wasPressedThisFrame) OpenTablePanel("all");
+        if (Keyboard.current.cKey.wasPressedThisFrame) OpenChatPanel();
+        if (Keyboard.current.oKey.wasPressedThisFrame) OpenFriendsPanel();
+        if (Keyboard.current.qKey.wasPressedThisFrame) OpenQuestsPanel();
+        if (Keyboard.current.lKey.wasPressedThisFrame) OpenAnimePanel();
+        if (Keyboard.current.uKey.wasPressedThisFrame) OpenUserCatalogPanel();
+        if (Keyboard.current.nKey.wasPressedThisFrame) OpenMatchingPanel();
+        if (Keyboard.current.tKey.wasPressedThisFrame) OpenTablePanel("all");
     }
 
     public void OpenQuestsPanel()
@@ -113,6 +148,12 @@ public class UIManager : MonoBehaviour
         }
     }
 
+    public void ConnectGlobalChatRoom()
+    {
+        EnsureChatPanel();
+        chatPanelController?.ConnectGlobalRoomInBackground();
+    }
+
     public void OpenChatPanelForUser(string userId, string username)
     {
         EnsureChatPanel();
@@ -134,6 +175,16 @@ public class UIManager : MonoBehaviour
         {
             friendsPanelController?.RefreshFriends();
         }
+    }
+
+    public void ShowErrorAlert(string message)
+    {
+        EnsureErrorAlert();
+        if (_errorAlert == null || _errorAlertText == null) return;
+
+        _errorAlertText.text = string.IsNullOrWhiteSpace(message) ? "Something went wrong." : message;
+        _errorAlert.SetActive(true);
+        _hideErrorAlertAt = Time.unscaledTime + 4.5f;
     }
 
     public void HideAll()
@@ -425,22 +476,356 @@ public class UIManager : MonoBehaviour
         });
     }
 
+    private void EnsurePanelToolbar()
+    {
+        if (_panelToolbar != null) return;
+
+        Transform parent = ResolvePanelParent();
+        _panelToolbar = new GameObject("PanelIconToolbar", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(VerticalLayoutGroup));
+        _panelToolbar.transform.SetParent(parent != null ? parent : transform, false);
+
+        var rect = _panelToolbar.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0f, 0.5f);
+        rect.anchorMax = new Vector2(0f, 0.5f);
+        rect.pivot = new Vector2(0f, 0.5f);
+        rect.anchoredPosition = new Vector2(20f, 0f);
+        rect.sizeDelta = new Vector2(58f, 490f);
+
+        var image = _panelToolbar.GetComponent<Image>();
+        image.color = new Color(0.16f, 0.09f, 0.03f, 0.22f);
+        image.raycastTarget = false;
+
+        var layout = _panelToolbar.GetComponent<VerticalLayoutGroup>();
+        layout.padding = new RectOffset(4, 4, 6, 6);
+        layout.spacing = 8f;
+        layout.childAlignment = TextAnchor.UpperCenter;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+
+        CreatePanelIconButton("Icon_AnimeCatalog", "A", OpenAnimePanel);
+        CreatePanelIconButton("Icon_UserCatalog", "U", OpenUserCatalogPanel);
+        CreatePanelIconButton("Icon_Quests", "Q", OpenQuestsPanel);
+        CreatePanelIconButton("Icon_Friends", "F", OpenFriendsPanel);
+        CreatePanelIconButton("Icon_Chat", "C", OpenChatPanel);
+        CreatePanelIconButton("Icon_Matching", "M", OpenMatchingPanel);
+        CreatePanelIconButton("Icon_Tables", "T", () => OpenTablePanel("all"));
+    }
+
+    private Button CreatePanelIconButton(string name, string label, Action onClick)
+    {
+        var buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        buttonObject.transform.SetParent(_panelToolbar.transform, false);
+
+        var rect = buttonObject.GetComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(50f, 50f);
+
+        var layout = buttonObject.GetComponent<LayoutElement>();
+        layout.preferredHeight = 50f;
+        layout.minHeight = 50f;
+
+        var image = buttonObject.GetComponent<Image>();
+        image.color = new Color(0.48f, 0.28f, 0.12f, 0.86f);
+
+        var button = buttonObject.GetComponent<Button>();
+        button.onClick.AddListener(() => onClick?.Invoke());
+
+        var labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        labelObject.transform.SetParent(buttonObject.transform, false);
+        var labelRect = labelObject.GetComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        var text = labelObject.GetComponent<Text>();
+        text.text = label;
+        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.alignment = TextAnchor.MiddleCenter;
+        text.fontSize = 26;
+        text.fontStyle = FontStyle.Bold;
+        text.color = Color.white;
+        text.raycastTarget = false;
+
+        return button;
+    }
+
+    private void EnsureMobileControls()
+    {
+        if (_mobileControls != null) return;
+
+        Transform parent = ResolvePanelParent();
+        _mobileControls = new GameObject("MobileControls", typeof(RectTransform));
+        _mobileControls.transform.SetParent(parent != null ? parent : transform, false);
+
+        var rootRect = _mobileControls.GetComponent<RectTransform>();
+        rootRect.anchorMin = Vector2.zero;
+        rootRect.anchorMax = Vector2.one;
+        rootRect.offsetMin = Vector2.zero;
+        rootRect.offsetMax = Vector2.zero;
+
+        var moveBase = CreateTouchSurface("MoveStick", _mobileControls.transform, new Vector2(0f, 0f), new Vector2(138f, 138f), new Vector2(172f, 172f), new Color(0.12f, 0.07f, 0.03f, 0.24f));
+        var moveKnob = CreateTouchSurface("Knob", moveBase.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(72f, 72f), new Color(0.48f, 0.28f, 0.12f, 0.74f));
+        moveKnob.GetComponent<Image>().raycastTarget = false;
+        var moveControl = moveBase.AddComponent<MobileMoveTouchControl>();
+        moveControl.Configure(playerInputs, moveKnob.GetComponent<RectTransform>(), 68f);
+
+        var lookPad = CreateTouchSurface("LookPad", _mobileControls.transform, new Vector2(1f, 0f), new Vector2(-178f, 156f), new Vector2(270f, 220f), new Color(0.12f, 0.07f, 0.03f, 0.10f));
+        var lookControl = lookPad.AddComponent<MobileLookTouchControl>();
+        lookControl.Configure(playerInputs, 0.12f);
+
+        var jumpButton = CreateHoldButton("JumpButton", "J", new Vector2(1f, 0f), new Vector2(-88f, 94f), MobileHoldAction.Jump);
+        jumpButton.transform.SetParent(_mobileControls.transform, false);
+
+        var sprintButton = CreateHoldButton("SprintButton", "S", new Vector2(1f, 0f), new Vector2(-178f, 64f), MobileHoldAction.Sprint);
+        sprintButton.transform.SetParent(_mobileControls.transform, false);
+
+        _mobileControls.SetActive(false);
+    }
+
+    private void EnsureWebGlPointerLockOverlay()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (_webGlPointerLockOverlay != null) return;
+
+        Transform parent = ResolvePanelParent();
+        _webGlPointerLockOverlay = new GameObject("WebGLPointerLockClickCatcher", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        _webGlPointerLockOverlay.transform.SetParent(parent != null ? parent : transform, false);
+        _webGlPointerLockOverlay.transform.SetAsFirstSibling();
+
+        var rect = _webGlPointerLockOverlay.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        var image = _webGlPointerLockOverlay.GetComponent<Image>();
+        image.color = new Color(0f, 0f, 0f, 0.001f);
+        image.raycastTarget = true;
+
+        var button = _webGlPointerLockOverlay.GetComponent<Button>();
+        button.transition = Selectable.Transition.None;
+        button.onClick.AddListener(RequestWebGlPointerLockFromGesture);
+        _webGlPointerLockOverlay.SetActive(false);
+#endif
+    }
+
+    private GameObject CreateTouchSurface(string name, Transform parent, Vector2 anchor, Vector2 position, Vector2 size, Color color)
+    {
+        var obj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        obj.transform.SetParent(parent, false);
+
+        var rect = obj.GetComponent<RectTransform>();
+        rect.anchorMin = anchor;
+        rect.anchorMax = anchor;
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = position;
+        rect.sizeDelta = size;
+
+        var image = obj.GetComponent<Image>();
+        image.color = color;
+
+        return obj;
+    }
+
+    private GameObject CreateHoldButton(string name, string label, Vector2 anchor, Vector2 position, MobileHoldAction action)
+    {
+        var obj = CreateTouchSurface(name, _mobileControls.transform, anchor, position, new Vector2(76f, 76f), new Color(0.48f, 0.28f, 0.12f, 0.82f));
+        var control = obj.AddComponent<MobileHoldButtonControl>();
+        control.Configure(playerInputs, action);
+
+        var labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        labelObject.transform.SetParent(obj.transform, false);
+        var rect = labelObject.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        var text = labelObject.GetComponent<Text>();
+        text.text = label;
+        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.alignment = TextAnchor.MiddleCenter;
+        text.fontSize = 28;
+        text.fontStyle = FontStyle.Bold;
+        text.color = Color.white;
+        text.raycastTarget = false;
+
+        return obj;
+    }
+
+    private void EnsureErrorAlert()
+    {
+        if (_errorAlert != null) return;
+
+        Transform parent = ResolvePanelParent();
+        _errorAlert = new GameObject("ErrorAlert", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        _errorAlert.transform.SetParent(parent != null ? parent : transform, false);
+
+        var rect = _errorAlert.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 1f);
+        rect.anchorMax = new Vector2(0.5f, 1f);
+        rect.pivot = new Vector2(0.5f, 1f);
+        rect.anchoredPosition = new Vector2(0f, -28f);
+        rect.sizeDelta = new Vector2(760f, 86f);
+
+        var background = _errorAlert.GetComponent<Image>();
+        background.sprite = fantasyWoodenBoardSprite;
+        background.type = Image.Type.Simple;
+        background.color = fantasyWoodenBoardSprite != null ? Color.white : new Color(0.22f, 0.11f, 0.05f, 0.92f);
+        background.raycastTarget = false;
+
+        var iconObject = new GameObject("RedExclamation", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        iconObject.transform.SetParent(_errorAlert.transform, false);
+        var iconRect = iconObject.GetComponent<RectTransform>();
+        iconRect.anchorMin = new Vector2(0f, 0.5f);
+        iconRect.anchorMax = new Vector2(0f, 0.5f);
+        iconRect.pivot = new Vector2(0f, 0.5f);
+        iconRect.anchoredPosition = new Vector2(28f, 0f);
+        iconRect.sizeDelta = new Vector2(56f, 56f);
+
+        var iconImage = iconObject.GetComponent<Image>();
+        iconImage.sprite = errorExclamationSprite;
+        iconImage.color = errorExclamationSprite != null ? Color.white : new Color(0.86f, 0.07f, 0.05f, 1f);
+        iconImage.raycastTarget = false;
+
+        var iconLabel = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        iconLabel.transform.SetParent(iconObject.transform, false);
+        var iconLabelRect = iconLabel.GetComponent<RectTransform>();
+        iconLabelRect.anchorMin = Vector2.zero;
+        iconLabelRect.anchorMax = Vector2.one;
+        iconLabelRect.offsetMin = Vector2.zero;
+        iconLabelRect.offsetMax = Vector2.zero;
+
+        var iconText = iconLabel.GetComponent<Text>();
+        iconText.text = "!";
+        iconText.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        iconText.alignment = TextAnchor.MiddleCenter;
+        iconText.fontSize = 40;
+        iconText.fontStyle = FontStyle.Bold;
+        iconText.color = Color.white;
+        iconText.raycastTarget = false;
+        iconText.enabled = errorExclamationSprite == null;
+
+        var messageObject = new GameObject("Message", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        messageObject.transform.SetParent(_errorAlert.transform, false);
+        var messageRect = messageObject.GetComponent<RectTransform>();
+        messageRect.anchorMin = new Vector2(0f, 0f);
+        messageRect.anchorMax = new Vector2(1f, 1f);
+        messageRect.offsetMin = new Vector2(104f, 12f);
+        messageRect.offsetMax = new Vector2(-28f, -12f);
+
+        _errorAlertText = messageObject.GetComponent<Text>();
+        _errorAlertText.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        _errorAlertText.alignment = TextAnchor.MiddleLeft;
+        _errorAlertText.fontSize = 24;
+        _errorAlertText.color = new Color(0.85f, 0.04f, 0.02f, 1f);
+        _errorAlertText.horizontalOverflow = HorizontalWrapMode.Wrap;
+        _errorAlertText.verticalOverflow = VerticalWrapMode.Truncate;
+        _errorAlertText.raycastTarget = false;
+
+        _errorAlert.SetActive(false);
+    }
+
+    private void QueueErrorAlert(string action, string message)
+    {
+        string actionText = string.IsNullOrWhiteSpace(action) ? "Error" : action;
+        string messageText = string.IsNullOrWhiteSpace(message) ? actionText : $"{actionText}: {message}";
+
+        lock (_pendingErrorAlertLock)
+        {
+            _pendingErrorAlerts.Enqueue(messageText);
+        }
+    }
+
+    private void UpdateErrorAlert()
+    {
+        string nextMessage = null;
+        lock (_pendingErrorAlertLock)
+        {
+            if (_pendingErrorAlerts.Count > 0)
+            {
+                nextMessage = _pendingErrorAlerts.Dequeue();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(nextMessage))
+        {
+            ShowErrorAlert(nextMessage);
+        }
+
+        if (_errorAlert != null && _errorAlert.activeSelf && Time.unscaledTime >= _hideErrorAlertAt)
+        {
+            _errorAlert.SetActive(false);
+        }
+    }
+
+    private void MaintainWebGlPointerLockState()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (!ShouldUseWebGlPointerLockOverlay()) return;
+
+        bool gameplayActive = !IsAnyPanelOpen() && !IsMainMenuOpen();
+        if (!gameplayActive)
+        {
+            if (_webGlPointerLockReady)
+            {
+                _webGlPointerLockReady = false;
+                RefreshCursorState();
+            }
+
+            return;
+        }
+
+        if (_webGlPointerLockReady && Time.unscaledTime - _webGlPointerLockRequestedAt > 0.35f && Cursor.lockState != CursorLockMode.Locked)
+        {
+            _webGlPointerLockReady = false;
+            RefreshCursorState();
+        }
+#endif
+    }
+
+    private void RequestWebGlPointerLockFromGesture()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (!ShouldUseWebGlPointerLockOverlay()) return;
+
+        _webGlPointerLockReady = true;
+        _webGlPointerLockRequestedAt = Time.unscaledTime;
+        _isUiInteractionEnabled = true;
+        RefreshCursorState();
+#endif
+    }
+
     private void RefreshCursorState()
     {
         bool anyPanelOpen = IsAnyPanelOpen();
-        if (anyPanelOpen == _isUiInteractionEnabled) return;
+        bool mainMenuOpen = IsMainMenuOpen();
+        bool gameplayInputEnabled = !anyPanelOpen && !mainMenuOpen;
 
-        _isUiInteractionEnabled = anyPanelOpen;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (!gameplayInputEnabled)
+        {
+            _webGlPointerLockReady = false;
+        }
+#endif
 
-        Cursor.lockState = anyPanelOpen ? CursorLockMode.None : CursorLockMode.Locked;
-        Cursor.visible = anyPanelOpen;
+        RefreshOverlayVisibility(anyPanelOpen, mainMenuOpen);
+        _isUiInteractionEnabled = anyPanelOpen || mainMenuOpen;
+
+        bool canLockPointer = CanUsePointerLock();
+        bool shouldLockPointer = gameplayInputEnabled && canLockPointer && ShouldLockPointerNow();
+
+        Cursor.lockState = shouldLockPointer ? CursorLockMode.Locked : CursorLockMode.None;
+        Cursor.visible = !shouldLockPointer;
 
         if (playerInputs != null)
         {
-            playerInputs.cursorLocked = !anyPanelOpen;
-            playerInputs.cursorInputForLook = !anyPanelOpen;
-            playerInputs.movementInputEnabled = !anyPanelOpen;
-            if (anyPanelOpen)
+            playerInputs.cursorLocked = shouldLockPointer;
+            playerInputs.cursorInputForLook = shouldLockPointer;
+            playerInputs.movementInputEnabled = gameplayInputEnabled;
+            if (!gameplayInputEnabled)
             {
                 playerInputs.LookInput(Vector2.zero);
                 playerInputs.MoveInput(Vector2.zero);
@@ -448,6 +833,81 @@ public class UIManager : MonoBehaviour
                 playerInputs.SprintInput(false);
             }
         }
+    }
+
+    private bool ShouldLockPointerNow()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        return _webGlPointerLockReady;
+#else
+        return true;
+#endif
+    }
+
+    private static bool CanUsePointerLock()
+    {
+        return !Application.isMobilePlatform;
+    }
+
+    private void RefreshOverlayVisibility()
+    {
+        RefreshOverlayVisibility(IsAnyPanelOpen(), IsMainMenuOpen());
+    }
+
+    private void RefreshOverlayVisibility(bool anyPanelOpen)
+    {
+        RefreshOverlayVisibility(anyPanelOpen, IsMainMenuOpen());
+    }
+
+    private void RefreshOverlayVisibility(bool anyPanelOpen, bool mainMenuOpen)
+    {
+        if (_panelToolbar != null)
+        {
+            _panelToolbar.SetActive(!mainMenuOpen && !anyPanelOpen);
+        }
+
+        if (_mobileControls != null)
+        {
+            _mobileControls.SetActive(ShouldUseMobileControls() && !mainMenuOpen && !anyPanelOpen);
+        }
+
+        RefreshWebGlPointerLockOverlay(anyPanelOpen, mainMenuOpen);
+    }
+
+    private void RefreshWebGlPointerLockOverlay(bool anyPanelOpen, bool mainMenuOpen)
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (_webGlPointerLockOverlay == null) return;
+
+        bool showOverlay = ShouldUseWebGlPointerLockOverlay() && !mainMenuOpen && !anyPanelOpen && Cursor.lockState != CursorLockMode.Locked;
+        _webGlPointerLockOverlay.SetActive(showOverlay);
+#endif
+    }
+
+    private bool ShouldUseMobileControls()
+    {
+#if UNITY_EDITOR
+        return forceMobileControlsInEditor;
+#elif UNITY_ANDROID
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    private static bool ShouldUseWebGlPointerLockOverlay()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        return !Application.isMobilePlatform;
+#else
+        return false;
+#endif
+    }
+
+    private static bool IsMainMenuOpen()
+    {
+        var mainMenu = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
+        return mainMenu != null && mainMenu.gameObject.activeInHierarchy;
     }
 
     private bool IsAnyPanelOpen()
@@ -545,12 +1005,185 @@ public class UIManager : MonoBehaviour
         var loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
         foreach (var loadedFont in loadedFonts)
         {
-            if (loadedFont != null && loadedFont.name.IndexOf(fontNamePart, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            if (loadedFont != null && loadedFont.name.IndexOf(fontNamePart, StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return loadedFont;
             }
         }
 
         return null;
+    }
+}
+
+public enum MobileHoldAction
+{
+    Jump,
+    Sprint
+}
+
+public class MobileMoveTouchControl : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
+{
+    private StarterAssetsInputs _inputs;
+    private RectTransform _rect;
+    private RectTransform _knob;
+    private float _radius = 68f;
+    private int _pointerId = int.MinValue;
+
+    public void Configure(StarterAssetsInputs inputs, RectTransform knob, float radius)
+    {
+        _inputs = inputs;
+        _knob = knob;
+        _radius = Mathf.Max(1f, radius);
+    }
+
+    private void Awake()
+    {
+        _rect = GetComponent<RectTransform>();
+    }
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        _pointerId = eventData.pointerId;
+        UpdateDrag(eventData);
+    }
+
+    public void OnDrag(PointerEventData eventData)
+    {
+        if (_pointerId != eventData.pointerId) return;
+        UpdateDrag(eventData);
+    }
+
+    public void OnPointerUp(PointerEventData eventData)
+    {
+        if (_pointerId != eventData.pointerId) return;
+        ResetInput();
+    }
+
+    private void UpdateDrag(PointerEventData eventData)
+    {
+        if (_rect == null) _rect = GetComponent<RectTransform>();
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(_rect, eventData.position, eventData.pressEventCamera, out Vector2 localPoint)) return;
+
+        Vector2 clamped = Vector2.ClampMagnitude(localPoint, _radius);
+        if (_knob != null)
+        {
+            _knob.anchoredPosition = clamped;
+        }
+
+        _inputs?.MoveInput(clamped / _radius);
+    }
+
+    private void ResetInput()
+    {
+        _pointerId = int.MinValue;
+        if (_knob != null)
+        {
+            _knob.anchoredPosition = Vector2.zero;
+        }
+
+        _inputs?.MoveInput(Vector2.zero);
+    }
+
+    private void OnDisable()
+    {
+        ResetInput();
+    }
+}
+
+public class MobileLookTouchControl : MonoBehaviour, IPointerDownHandler, IDragHandler, IPointerUpHandler
+{
+    private StarterAssetsInputs _inputs;
+    private float _sensitivity = 0.12f;
+    private int _pointerId = int.MinValue;
+    private bool _dragging;
+
+    public void Configure(StarterAssetsInputs inputs, float sensitivity)
+    {
+        _inputs = inputs;
+        _sensitivity = Mathf.Max(0.01f, sensitivity);
+    }
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        _pointerId = eventData.pointerId;
+        _dragging = true;
+    }
+
+    public void OnDrag(PointerEventData eventData)
+    {
+        if (_pointerId != eventData.pointerId) return;
+        _inputs?.LookInput(eventData.delta * _sensitivity);
+    }
+
+    public void OnPointerUp(PointerEventData eventData)
+    {
+        if (_pointerId != eventData.pointerId) return;
+        ResetInput();
+    }
+
+    private void Update()
+    {
+        if (!_dragging)
+        {
+            _inputs?.LookInput(Vector2.zero);
+        }
+    }
+
+    private void ResetInput()
+    {
+        _pointerId = int.MinValue;
+        _dragging = false;
+        _inputs?.LookInput(Vector2.zero);
+    }
+
+    private void OnDisable()
+    {
+        ResetInput();
+    }
+}
+
+public class MobileHoldButtonControl : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
+{
+    private StarterAssetsInputs _inputs;
+    private MobileHoldAction _action;
+    private bool _pressed;
+
+    public void Configure(StarterAssetsInputs inputs, MobileHoldAction action)
+    {
+        _inputs = inputs;
+        _action = action;
+    }
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        _pressed = true;
+        Apply(true);
+    }
+
+    public void OnPointerUp(PointerEventData eventData)
+    {
+        _pressed = false;
+        Apply(false);
+    }
+
+    private void OnDisable()
+    {
+        if (!_pressed) return;
+        _pressed = false;
+        Apply(false);
+    }
+
+    private void Apply(bool value)
+    {
+        if (_inputs == null) return;
+
+        if (_action == MobileHoldAction.Jump)
+        {
+            _inputs.JumpInput(value);
+        }
+        else if (_action == MobileHoldAction.Sprint)
+        {
+            _inputs.SprintInput(value);
+        }
     }
 }

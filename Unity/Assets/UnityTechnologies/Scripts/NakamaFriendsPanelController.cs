@@ -18,6 +18,7 @@ public class NakamaFriendsPanelController : MonoBehaviour
     private InputField _searchInput;
     private ScrollRect _scrollRect;
     private RectTransform _content;
+    private int _refreshGeneration;
     private readonly List<FriendDisplayRow> _allRows = new List<FriendDisplayRow>();
 
     public void ConfigureFont(Font font)
@@ -41,9 +42,11 @@ public class NakamaFriendsPanelController : MonoBehaviour
     public async void RefreshFriends()
     {
         EnsureElements();
+        int generation = ++_refreshGeneration;
 
         if (!TryGetAuth(out var auth))
         {
+            if (generation != _refreshGeneration) return;
             _allRows.Clear();
             ClearRows();
             SetStatus("Log in to manage friends.");
@@ -62,6 +65,8 @@ public class NakamaFriendsPanelController : MonoBehaviour
             var rowsById = new Dictionary<string, FriendDisplayRow>();
             var friendList = await auth.Client.ListFriendsAsync(auth.Session, null, 100, null);
 
+            if (generation != _refreshGeneration) return;
+
             if (friendList != null && friendList.Friends != null)
             {
                 foreach (var friend in friendList.Friends)
@@ -79,6 +84,8 @@ public class NakamaFriendsPanelController : MonoBehaviour
             }
 
             var directory = await LoadDirectoryUsers(auth);
+            if (generation != _refreshGeneration) return;
+
             foreach (var user in directory)
             {
                 if (rowsById.TryGetValue(user.userId, out var existing))
@@ -100,6 +107,7 @@ public class NakamaFriendsPanelController : MonoBehaviour
                 rowsById[row.userId] = row;
             }
 
+            rows.RemoveAll(ShouldHideFromDirectory);
             rows.Sort(CompareFriendRows);
             _allRows.AddRange(rows);
             RenderFilteredRows();
@@ -107,6 +115,7 @@ public class NakamaFriendsPanelController : MonoBehaviour
         }
         catch (Exception ex)
         {
+            if (generation != _refreshGeneration) return;
             _allRows.Clear();
             ClearRows();
             SetStatus("Could not load friends.");
@@ -114,7 +123,10 @@ public class NakamaFriendsPanelController : MonoBehaviour
         }
         finally
         {
-            SetInputsInteractable(true);
+            if (generation == _refreshGeneration)
+            {
+                SetInputsInteractable(true);
+            }
         }
     }
 
@@ -143,6 +155,7 @@ public class NakamaFriendsPanelController : MonoBehaviour
             }
 
             await ResolveDirectoryUsernames(users, auth);
+            users.RemoveAll(user => user != null && IsLikelyIncognitoName(user.displayName, user.userId));
         }
         catch (Exception ex)
         {
@@ -181,7 +194,7 @@ public class NakamaFriendsPanelController : MonoBehaviour
             foreach (var user in users)
             {
                 if (user == null || string.IsNullOrWhiteSpace(user.userId)) continue;
-                if (namesById.TryGetValue(user.userId, out string username))
+                if (namesById.TryGetValue(user.userId, out string username) && !IsLikelyIncognitoName(username, user.userId))
                 {
                     user.displayName = username;
                 }
@@ -614,10 +627,38 @@ public class NakamaFriendsPanelController : MonoBehaviour
         }
     }
 
+    private static bool ShouldHideFromDirectory(FriendDisplayRow row)
+    {
+        return row != null && row.state == -1 && IsLikelyIncognitoName(row.displayName, row.userId);
+    }
+
     private static bool IsGeneratedName(string displayName, string userId)
     {
         if (string.IsNullOrWhiteSpace(displayName) || string.IsNullOrWhiteSpace(userId)) return false;
         return string.Equals(displayName, $"player_{userId.Substring(0, Math.Min(6, userId.Length))}", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLikelyIncognitoName(string displayName, string userId)
+    {
+        if (string.IsNullOrWhiteSpace(displayName)) return false;
+        if (IsGeneratedName(displayName, userId)) return true;
+
+        string value = displayName.Trim();
+        if (value.Length < 10 || value.Length > 18) return false;
+
+        bool hasUpper = false;
+        bool hasLower = false;
+        bool hasDigit = false;
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (!char.IsLetterOrDigit(c)) return false;
+            hasUpper |= char.IsUpper(c);
+            hasLower |= char.IsLower(c);
+            hasDigit |= char.IsDigit(c);
+        }
+
+        return hasUpper && hasLower && !hasDigit;
     }
 
     private static bool TryGetAuth(out NakamaAuthManager auth)

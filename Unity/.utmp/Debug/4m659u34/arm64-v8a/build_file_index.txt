@@ -1,0 +1,2 @@
+C:\Users\alvar\Desktop\Clases\AnimeQuest\Unity\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\CMakeLists.txt
+C:\Users\alvar\Desktop\Clases\AnimeQuest\Unity\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\src\main\cpp\GameActivity\CMakeLists.txt

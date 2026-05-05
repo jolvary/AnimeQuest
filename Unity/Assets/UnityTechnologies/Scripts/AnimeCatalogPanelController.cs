@@ -10,7 +10,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
     private static readonly string[] StatusValues = { "", "watching", "completed", "planned", "dropped", "on_hold" };
     private static readonly Color DeckSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.22f);
     private static readonly Color DeckInputColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
-    private static readonly Color DeckOverlayColor = new Color(0.96f, 0.90f, 0.78f, 0.28f);
+    private const int MaxPosterFailureLogs = 10;
+    private static int PosterFailureLogCount;
 
     public string defaultSearch = "";
     public int defaultLimit = 100;
@@ -36,7 +37,6 @@ public class AnimeCatalogPanelController : MonoBehaviour
         preferredFont = font;
         ApplyFonts();
     }
-
 
     public void SetIncognitoMode(bool enabled)
     {
@@ -171,8 +171,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         _searchBar = searchObj.GetComponent<RectTransform>();
         _searchBar.anchorMin = new Vector2(0f, 1f);
         _searchBar.anchorMax = new Vector2(1f, 1f);
-        _searchBar.offsetMin = new Vector2(48f, -170f);
-        _searchBar.offsetMax = new Vector2(-48f, -128f);
+        _searchBar.offsetMin = new Vector2(68f, -170f);
+        _searchBar.offsetMax = new Vector2(-88f, -148f);
 
         var layout = searchObj.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -290,8 +290,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         _pagingBar = pagingObj.GetComponent<RectTransform>();
         _pagingBar.anchorMin = new Vector2(1f, 1f);
         _pagingBar.anchorMax = new Vector2(1f, 1f);
-        _pagingBar.offsetMin = new Vector2(-348f, -218f);
-        _pagingBar.offsetMax = new Vector2(-48f, -180f);
+        _pagingBar.offsetMin = new Vector2(-448f, -218f);
+        _pagingBar.offsetMax = new Vector2(-88f, -180f);
 
         var layout = pagingObj.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -375,7 +375,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         viewportRect.anchorMin = new Vector2(0f, 0f);
         viewportRect.anchorMax = new Vector2(1f, 1f);
         viewportRect.offsetMin = new Vector2(48f, 48f);
-        viewportRect.offsetMax = new Vector2(-48f, -232f);
+        viewportRect.offsetMax = new Vector2(-68f, -232f);
 
         var viewportImage = viewportObj.GetComponent<Image>();
         viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
@@ -443,14 +443,14 @@ public class AnimeCatalogPanelController : MonoBehaviour
         card.transform.SetParent(_deckContent, false);
 
         var cardRect = card.GetComponent<RectTransform>();
-        cardRect.sizeDelta = new Vector2(0f, 236f);
+        cardRect.sizeDelta = new Vector2(0f, 156f);
 
         var cardImage = card.GetComponent<Image>();
         cardImage.color = DeckSurfaceColor;
 
         var cardLayout = card.GetComponent<LayoutElement>();
-        cardLayout.minHeight = 236f;
-        cardLayout.preferredHeight = 236f;
+        cardLayout.minHeight = 156f;
+        cardLayout.preferredHeight = 156f;
 
         var row = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
         row.transform.SetParent(card.transform, false);
@@ -470,7 +470,10 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
         CreatePoster(item, row.transform);
         CreateInfoArea(item, row.transform);
-        CreateActionsArea(item, row.transform, card.transform);
+        if (!_isIncognitoMode)
+        {
+            CreateActionsArea(item, row.transform);
+        }
     }
 
     private void CreatePoster(AnimeDeckItem item, Transform parent)
@@ -513,68 +516,20 @@ public class AnimeCatalogPanelController : MonoBehaviour
         vLayout.childForceExpandHeight = false;
 
         CreateLabel(infoObj.transform, item.title, 18, FontStyle.Bold, TextAnchor.UpperLeft);
-        CreateLabel(infoObj.transform, Safe(item.briefDescription), 14, FontStyle.Normal, TextAnchor.UpperLeft);
+        CreateLabel(infoObj.transform, Safe(item.description), 14, FontStyle.Normal, TextAnchor.UpperLeft);
 
-        string metadata = $"Episodes: {FormatEpisodes(item.episodes)}  |  Release: {Safe(item.releaseDate)}";
+        string metadata = $"Episodes: {FormatEpisodes(item.episodes)}  |  Release: {Safe(item.releaseDate)} | Genres: {FormatGenres(item.genres)}";
         CreateLabel(infoObj.transform, metadata, 13, FontStyle.Italic, TextAnchor.UpperLeft);
 
-        string statusLabel = userCatalogOnly ? "Status" : "Your status";
-        CreateLabel(infoObj.transform, $"{statusLabel}: {FormatWatchStatus(item.watchStatus)}", 13, FontStyle.Bold, TextAnchor.UpperLeft);
-        CreateLabel(infoObj.transform, $"Watched: {FormatWatchedEpisodes(item.episodesWatched, item.episodes)}  |  Score: {FormatScore(item.score)}", 13, FontStyle.Normal, TextAnchor.UpperLeft);
-
-        CreateExpandedDescription(infoObj.transform, Safe(item.description));
+        if (!_isIncognitoMode)
+        {
+            string statusLabel = userCatalogOnly ? "Status" : "Your status";
+            CreateLabel(infoObj.transform, $"{statusLabel}: {FormatWatchStatus(item.watchStatus)}", 13, FontStyle.Bold, TextAnchor.UpperLeft);
+            CreateLabel(infoObj.transform, $"Watched: {FormatWatchedEpisodes(item.episodesWatched, item.episodes)}  |  Score: {FormatScore(item.score)}", 13, FontStyle.Normal, TextAnchor.UpperLeft);
+        }
     }
 
-    private void CreateExpandedDescription(Transform parent, string value)
-    {
-        var viewportObj = new GameObject("ExpandedDescription", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Mask), typeof(ScrollRect), typeof(LayoutElement));
-        viewportObj.transform.SetParent(parent, false);
-        viewportObj.SetActive(false);
-
-        var layout = viewportObj.GetComponent<LayoutElement>();
-        layout.minHeight = 118f;
-        layout.preferredHeight = 118f;
-        layout.flexibleHeight = 0f;
-
-        var image = viewportObj.GetComponent<Image>();
-        image.color = DeckOverlayColor;
-        viewportObj.GetComponent<Mask>().showMaskGraphic = true;
-
-        var viewportRect = viewportObj.GetComponent<RectTransform>();
-        var scrollRect = viewportObj.GetComponent<ScrollRect>();
-        scrollRect.horizontal = false;
-        scrollRect.vertical = true;
-        scrollRect.movementType = ScrollRect.MovementType.Clamped;
-        scrollRect.scrollSensitivity = 12f;
-        scrollRect.viewport = viewportRect;
-
-        var contentObj = new GameObject("TextContent", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text), typeof(ContentSizeFitter));
-        contentObj.transform.SetParent(viewportObj.transform, false);
-
-        var contentRect = contentObj.GetComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0f, 1f);
-        contentRect.anchorMax = new Vector2(1f, 1f);
-        contentRect.pivot = new Vector2(0.5f, 1f);
-        contentRect.offsetMin = new Vector2(8f, 0f);
-        contentRect.offsetMax = new Vector2(-8f, -8f);
-
-        var text = contentObj.GetComponent<Text>();
-        text.text = value;
-        text.fontSize = 13;
-        text.fontStyle = FontStyle.Normal;
-        text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
-        text.alignment = TextAnchor.UpperLeft;
-        text.horizontalOverflow = HorizontalWrapMode.Wrap;
-        text.verticalOverflow = VerticalWrapMode.Overflow;
-
-        var fitter = contentObj.GetComponent<ContentSizeFitter>();
-        fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-        fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-        scrollRect.content = contentRect;
-    }
-
-    private void CreateActionsArea(AnimeDeckItem item, Transform parent, Transform card)
+    private void CreateActionsArea(AnimeDeckItem item, Transform parent)
     {
         var actionsObj = new GameObject("Actions", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
         actionsObj.transform.SetParent(parent, false);
@@ -591,16 +546,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         vLayout.childForceExpandWidth = true;
         vLayout.childForceExpandHeight = false;
 
-        if (!_isIncognitoMode)
-        {
-            CreateLabel(actionsObj.transform, "Status", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
-            CreateStatusDropdown(actionsObj.transform, item);
-        }
-
-        CreateActionButton(actionsObj.transform, "Expand / Collapse", () =>
-        {
-            ToggleExpanded(card);
-        });
+        CreateLabel(actionsObj.transform, "Status", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
+        CreateStatusDropdown(actionsObj.transform, item);
     }
 
     private void CreateStatusDropdown(Transform parent, AnimeDeckItem item)
@@ -795,37 +742,6 @@ public class AnimeCatalogPanelController : MonoBehaviour
         return text;
     }
 
-    private void CreateActionButton(Transform parent, string label, Action onClick)
-    {
-        var buttonObj = new GameObject($"Btn_{label}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
-        buttonObj.transform.SetParent(parent, false);
-
-        var layout = buttonObj.GetComponent<LayoutElement>();
-        layout.minHeight = 30f;
-        layout.preferredHeight = 30f;
-
-        var image = buttonObj.GetComponent<Image>();
-        image.color = new Color(0.42f, 0.27f, 0.14f, 0.95f);
-
-        var button = buttonObj.GetComponent<Button>();
-        button.onClick.AddListener(() => onClick?.Invoke());
-
-        var textObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-        textObj.transform.SetParent(buttonObj.transform, false);
-
-        var textRect = textObj.GetComponent<RectTransform>();
-        textRect.anchorMin = Vector2.zero;
-        textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = Vector2.zero;
-        textRect.offsetMax = Vector2.zero;
-
-        var text = textObj.GetComponent<Text>();
-        text.text = label;
-        text.fontSize = 13;
-        text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.white;
-    }
-
     private void RenderActionVisibility()
     {
         if (_deckContent == null) return;
@@ -833,28 +749,11 @@ public class AnimeCatalogPanelController : MonoBehaviour
         for (int i = 0; i < _deckContent.childCount; i++)
         {
             var actions = _deckContent.GetChild(i).Find("Row/Actions");
-            if (actions == null) continue;
-
-            for (int j = 0; j < actions.childCount; j++)
+            if (actions != null)
             {
-                var actionName = actions.GetChild(j).name;
-                bool isExpandButton = actionName.IndexOf("Expand / Collapse", StringComparison.OrdinalIgnoreCase) >= 0;
-                actions.GetChild(j).gameObject.SetActive(!_isIncognitoMode || isExpandButton);
+                actions.gameObject.SetActive(!_isIncognitoMode);
             }
         }
-    }
-
-    private void ToggleExpanded(Transform card)
-    {
-        var expanded = card.Find("Row/Info/ExpandedDescription");
-        if (expanded == null) return;
-
-        bool next = !expanded.gameObject.activeSelf;
-        expanded.gameObject.SetActive(next);
-
-        var layout = card.GetComponent<LayoutElement>();
-        layout.minHeight = next ? 360f : 236f;
-        layout.preferredHeight = layout.minHeight;
     }
 
     private System.Collections.IEnumerator LoadPoster(string url, RawImage target)
@@ -877,10 +776,16 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
     private System.Collections.IEnumerator TryLoadPoster(string url, RawImage target)
     {
-        using (var req = UnityWebRequestTexture.GetTexture(url))
+        string requestUrl = BuildPosterRequestUrl(url);
+        using (var req = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(requestUrl))
         {
             yield return req.SendWebRequest();
-            if (target == null || req.result != UnityWebRequest.Result.Success) yield break;
+            if (target == null) yield break;
+            if (req.result != UnityWebRequest.Result.Success)
+            {
+                LogPosterRequestFailure(url, requestUrl, req);
+                yield break;
+            }
 
             Texture2D texture = null;
             try
@@ -898,6 +803,23 @@ public class AnimeCatalogPanelController : MonoBehaviour
                 target.color = Color.white;
             }
         }
+    }
+
+    private static string BuildPosterRequestUrl(string url)
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (ApiClient.Instance == null) return url;
+        return ApiClient.Instance.BuildImageProxyUrl(url);
+#else
+        return url;
+#endif
+    }
+
+    private static void LogPosterRequestFailure(string originalUrl, string requestUrl, UnityWebRequest request)
+    {
+        if (PosterFailureLogCount >= MaxPosterFailureLogs) return;
+        PosterFailureLogCount += 1;
+        DozzleLogger.Error("Anime poster request failed", $"url={originalUrl};request={requestUrl};status={request.responseCode};error={request.error}");
     }
 
     private static string BuildPosterFallbackUrl(string url)
@@ -1058,6 +980,12 @@ public class AnimeCatalogPanelController : MonoBehaviour
             case "on_hold": return "On Hold";
             default: return status;
         }
+    }
+
+    private static string FormatGenres(string[] genres)
+    {
+        if (genres == null || genres.Length == 0) return "-";
+        return string.Join(", ", genres);
     }
 
     [Serializable]

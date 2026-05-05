@@ -1,0 +1,1 @@
+C:\Users\alvar\Desktop\Clases\AnimeQuest\Unity\Library\Bee\Android\Prj\IL2CPP\Gradle\unityLibrary\build\intermediates\cxx\Debug\4m659u34\obj\arm64-v8a

@@ -6,6 +6,8 @@ public static class DozzleLogger
     private const int MaxPendingLogs = 100;
     private static readonly List<ClientLogEvent> PendingLogs = new List<ClientLogEvent>();
 
+    public static event Action<string, string> ErrorReported;
+
     public static void Action(string action, string details = null)
     {
         EnqueueOrSend(new ClientLogEvent
@@ -31,6 +33,11 @@ public static class DozzleLogger
             message = message,
             timestamp = DateTime.UtcNow.ToString("O"),
         });
+
+        if (IsUserFacingError(action))
+        {
+            NotifyError(action, message);
+        }
     }
 
     public static void FlushPending()
@@ -80,6 +87,34 @@ public static class DozzleLogger
         catch
         {
             // Keep gameplay/UI flows independent from external log delivery.
+        }
+    }
+
+    private static bool IsUserFacingError(string action)
+    {
+        if (string.IsNullOrWhiteSpace(action)) return false;
+
+        string normalized = action.Trim().ToLowerInvariant();
+        return normalized.Contains("login") ||
+               normalized.Contains("register") ||
+               normalized.Contains("chat") ||
+               normalized.Contains("session") ||
+               normalized.Contains("logout") ||
+               normalized.Contains("incognito") ||
+               normalized.Contains("mal link") ||
+               normalized.Contains("mal import") ||
+               normalized.Contains("myanimelist");
+    }
+
+    private static void NotifyError(string action, string message)
+    {
+        try
+        {
+            ErrorReported?.Invoke(action, message);
+        }
+        catch
+        {
+            // Error UI must never break the original flow.
         }
     }
 

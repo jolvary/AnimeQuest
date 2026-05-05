@@ -10,6 +10,7 @@ public class NakamaChatPanelController : MonoBehaviour
 {
     private const int MaxChatMessageLength = 900;
     private const int MaxChatPayloadBytes = 3500;
+    private const int ChatOperationTimeoutMilliseconds = 5000;
     private static readonly Color PanelRowSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.24f);
     private static readonly Color ComposerSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
 
@@ -27,7 +28,9 @@ public class NakamaChatPanelController : MonoBehaviour
     private string _activeChannelId;
     private string _activeChannelKey;
     private bool _subscribedToSocket;
+    private ISocket _subscribedSocket;
     private bool _isJoiningChannel;
+    private int _joinGeneration;
     private readonly List<string> _renderedMessageIds = new List<string>();
     private readonly List<ChatDisplayMessage> _pendingMessages = new List<ChatDisplayMessage>();
     private readonly object _pendingMessagesLock = new object();
@@ -75,6 +78,23 @@ public class NakamaChatPanelController : MonoBehaviour
         await JoinChannel(defaultRoomName, ChannelType.Room, "General Chat", channelKey, hidden: false);
     }
 
+    public void ConnectGlobalRoomInBackground()
+    {
+        if (!TryGetSessionAuth(out var auth) || auth.IsIncognitoSession)
+        {
+            return;
+        }
+
+        string channelKey = $"room:{defaultRoomName}";
+        if (_channel != null && string.Equals(_activeChannelKey, channelKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        DozzleLogger.Action("Global chat auto-join requested", $"room={defaultRoomName}");
+        _ = JoinChannel(defaultRoomName, ChannelType.Room, "General Chat", channelKey, hidden: false);
+    }
+
     public async void OpenDirectMessage(string userId, string username)
     {
         if (string.IsNullOrWhiteSpace(userId))
@@ -100,39 +120,84 @@ public class NakamaChatPanelController : MonoBehaviour
     {
         EnsureElements();
 
-        if (_isJoiningChannel)
-        {
-            return;
-        }
-
-        if (!TryGetAuth(out var auth))
-        {
-            _channel = null;
-            _activeChannelId = null;
-            _activeChannelKey = null;
-            SetTitle("Chat");
-            SetStatus("Log in to use chat.");
-            RefreshSendState();
-            return;
-        }
-
+        int generation = ++_joinGeneration;
         _isJoiningChannel = true;
+
         try
         {
-            SubscribeToSocket();
             SetTitle(label);
+
+            if (!TryGetAuth(out var auth))
+            {
+                bool hasSession = TryGetSessionAuth(out var sessionAuth);
+                if (!hasSession)
+                {
+                    if (generation != _joinGeneration) return;
+                    _channel = null;
+                    _activeChannelId = null;
+                    _activeChannelKey = null;
+                    SetTitle("Chat");
+                    SetStatus("Log in to use chat.");
+                    RefreshSendState();
+                    return;
+                }
+
+                SetStatus("Connecting to chat...");
+                RefreshSendState();
+                bool connected = await sessionAuth.EnsureSocketConnectedAsync(ChatOperationTimeoutMilliseconds);
+                if (generation != _joinGeneration) return;
+
+                if (connected)
+                {
+                    SubscribeToSocket();
+                }
+            }
+
+            if (!TryGetAuth(out auth))
+            {
+                if (generation != _joinGeneration) return;
+                _channel = null;
+                _activeChannelId = null;
+                _activeChannelKey = null;
+                SetStatus("Chat connection unavailable. Try again in a moment.");
+                RefreshSendState();
+                return;
+            }
+
+            SubscribeToSocket();
             SetStatus("Connecting to chat...");
             RefreshSendState();
 
-            _channel = await auth.Socket.JoinChatAsync(target, type, persistence: true, hidden: hidden);
+            var joinTask = auth.Socket.JoinChatAsync(target, type, persistence: true, hidden: hidden);
+            var completed = await Task.WhenAny(joinTask, Task.Delay(ChatOperationTimeoutMilliseconds));
+            if (generation != _joinGeneration)
+            {
+                ObserveBackgroundTask(joinTask);
+                return;
+            }
+
+            if (completed != joinTask)
+            {
+                ObserveBackgroundTask(joinTask);
+                SetStatus("Chat connection timed out. Try again in a moment.");
+                RefreshSendState();
+                DozzleLogger.Error("Chat channel join timed out", $"target={target};type={type};timeoutMs={ChatOperationTimeoutMilliseconds}");
+                return;
+            }
+
+            _channel = await joinTask;
+            if (generation != _joinGeneration) return;
+
             _activeChannelId = _channel.Id;
             _activeChannelKey = channelKey;
-            DozzleLogger.Action("Chat channel joined", $"channel={_channel.Id};type={type}");
-            await LoadHistory();
+            SetStatus("Chat ready.");
+            DozzleLogger.Action("Chat channel joined", $"channel={_channel.Id};type={type};target={target}");
+            await LoadHistory(generation);
             RefreshSendState();
         }
         catch (Exception ex)
         {
+            if (generation != _joinGeneration) return;
             _channel = null;
             _activeChannelId = null;
             _activeChannelKey = null;
@@ -142,24 +207,46 @@ public class NakamaChatPanelController : MonoBehaviour
         }
         finally
         {
-            _isJoiningChannel = false;
+            if (generation == _joinGeneration)
+            {
+                _isJoiningChannel = false;
+                RefreshSendState();
+            }
         }
     }
 
-    private async Task LoadHistory()
+    private async Task LoadHistory(int generation)
     {
+        if (generation != _joinGeneration) return;
+
         ClearRows();
         _renderedMessageIds.Clear();
 
         if (_channel == null || !TryGetAuth(out var auth))
         {
+            if (generation != _joinGeneration) return;
             SetStatus("Chat unavailable.");
             return;
         }
 
+        string channelId = _channel.Id;
         try
         {
-            var history = await auth.Client.ListChannelMessagesAsync(auth.Session, _channel.Id, 50, true, null);
+            var historyTask = auth.Client.ListChannelMessagesAsync(auth.Session, channelId, 50, true, null);
+            var completed = await Task.WhenAny(historyTask, Task.Delay(ChatOperationTimeoutMilliseconds));
+            if (generation != _joinGeneration || !string.Equals(channelId, _activeChannelId, StringComparison.Ordinal)) return;
+
+            if (completed != historyTask)
+            {
+                ObserveBackgroundTask(historyTask);
+                SetStatus("Chat ready. Previous messages unavailable.");
+                DozzleLogger.Error("Chat history load timed out", $"channel={channelId};timeoutMs={ChatOperationTimeoutMilliseconds}");
+                return;
+            }
+
+            var history = await historyTask;
+            if (generation != _joinGeneration || !string.Equals(channelId, _activeChannelId, StringComparison.Ordinal)) return;
+
             if (history != null && history.Messages != null)
             {
                 foreach (var message in history.Messages)
@@ -173,7 +260,8 @@ public class NakamaChatPanelController : MonoBehaviour
         }
         catch (Exception ex)
         {
-            SetStatus("Could not load previous messages.");
+            if (generation != _joinGeneration || !string.Equals(channelId, _activeChannelId, StringComparison.Ordinal)) return;
+            SetStatus("Chat ready. Could not load previous messages.");
             DozzleLogger.Error("Chat history load failed", ex);
         }
     }
@@ -195,9 +283,24 @@ public class NakamaChatPanelController : MonoBehaviour
 
         if (!TryGetAuth(out var auth))
         {
-            SetStatus("Log in to send chat messages.");
-            RefreshSendState();
-            return;
+            bool hasSession = TryGetSessionAuth(out var sessionAuth);
+            if (hasSession)
+            {
+                SetStatus("Connecting to chat...");
+                RefreshSendState();
+                bool connected = await sessionAuth.EnsureSocketConnectedAsync(ChatOperationTimeoutMilliseconds);
+                if (connected)
+                {
+                    SubscribeToSocket();
+                }
+            }
+
+            if (!TryGetAuth(out auth))
+            {
+                SetStatus(hasSession ? "Chat connection unavailable. Try again in a moment." : "Log in to send chat messages.");
+                RefreshSendState();
+                return;
+            }
         }
 
         if (auth.IsIncognitoSession)
@@ -255,24 +358,34 @@ public class NakamaChatPanelController : MonoBehaviour
 
     private void SubscribeToSocket()
     {
-        if (_subscribedToSocket || NakamaAuthManager.Instance == null || NakamaAuthManager.Instance.Socket == null)
+        if (NakamaAuthManager.Instance == null || NakamaAuthManager.Instance.Socket == null)
         {
             return;
         }
 
-        NakamaAuthManager.Instance.Socket.ReceivedChannelMessage += OnReceivedChannelMessage;
+        var socket = NakamaAuthManager.Instance.Socket;
+        if (_subscribedToSocket && ReferenceEquals(_subscribedSocket, socket))
+        {
+            return;
+        }
+
+        UnsubscribeFromSocket();
+        socket.ReceivedChannelMessage += OnReceivedChannelMessage;
+        _subscribedSocket = socket;
         _subscribedToSocket = true;
     }
 
     private void UnsubscribeFromSocket()
     {
-        if (!_subscribedToSocket || NakamaAuthManager.Instance == null || NakamaAuthManager.Instance.Socket == null)
+        if (!_subscribedToSocket || _subscribedSocket == null)
         {
             _subscribedToSocket = false;
+            _subscribedSocket = null;
             return;
         }
 
-        NakamaAuthManager.Instance.Socket.ReceivedChannelMessage -= OnReceivedChannelMessage;
+        _subscribedSocket.ReceivedChannelMessage -= OnReceivedChannelMessage;
+        _subscribedSocket = null;
         _subscribedToSocket = false;
     }
 
@@ -310,6 +423,18 @@ public class NakamaChatPanelController : MonoBehaviour
             RenderMessage(message);
         }
         ResetScrollToBottom();
+    }
+
+    private static async void ObserveBackgroundTask(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch
+        {
+            // The foreground timeout path already logged enough context.
+        }
     }
 
     private static ChatDisplayMessage ToDisplayMessage(IApiChannelMessage message)
@@ -602,7 +727,7 @@ public class NakamaChatPanelController : MonoBehaviour
     {
         bool hasAuth = TryGetAuth(out var auth);
         bool isIncognito = hasAuth && auth.IsIncognitoSession;
-        bool canSend = _channel != null && hasAuth && !isIncognito;
+        bool canSend = !_isJoiningChannel && _channel != null && hasAuth && !isIncognito;
         SetSendInteractable(canSend);
 
         if (_channel != null && isIncognito)
@@ -627,8 +752,13 @@ public class NakamaChatPanelController : MonoBehaviour
 
     private static bool TryGetAuth(out NakamaAuthManager auth)
     {
+        return TryGetSessionAuth(out auth) && auth.Socket != null && auth.IsConnectionReady;
+    }
+
+    private static bool TryGetSessionAuth(out NakamaAuthManager auth)
+    {
         auth = NakamaAuthManager.Instance;
-        return auth != null && auth.IsAuthenticated && auth.Client != null && auth.Session != null && auth.Socket != null;
+        return auth != null && auth.IsAuthenticated && auth.Client != null && auth.Session != null;
     }
 
     private static string ExtractMessageText(string rawContent)

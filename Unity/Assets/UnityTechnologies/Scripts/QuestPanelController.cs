@@ -1,15 +1,18 @@
 using System;
-using System.Text;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
 public class QuestPanelController : MonoBehaviour
 {
+    private static readonly Color QuestTextColor = new Color(0.17f, 0.10f, 0.04f, 1f);
+
     public Font preferredFont;
 
     private Text _descriptionText;
-    private Text _contentText;
+    private Text _statusText;
     private ScrollRect _contentScrollRect;
+    private RectTransform _content;
 
     public void ConfigureFont(Font font)
     {
@@ -20,19 +23,35 @@ public class QuestPanelController : MonoBehaviour
     public async void RefreshQuests()
     {
         EnsureTextElements();
-        _descriptionText.text = "Quests database: available weekly quests with requirements and rewards.";
-        _contentText.text = "Loading quests...";
+        SetStatus("Loading quests...");
+        ClearCards();
 
         try
         {
             string json = await ApiClient.Instance.GetQuests();
-            _contentText.text = FormatQuestsAsTable(json);
+            var response = JsonUtility.FromJson<QuestResponse>(json);
+            var stats = await LoadUserAnimeStats();
+
+            if (response == null || response.items == null || response.items.Length == 0)
+            {
+                SetStatus("No quests found.");
+                ResetScrollToTop();
+                return;
+            }
+
+            foreach (var item in response.items)
+            {
+                CreateQuestCard(item, stats);
+            }
+
+            SetStatus($"Loaded {response.items.Length} weekly quests.");
             ResetScrollToTop();
             DozzleLogger.Action("Quests loaded", json);
         }
         catch (Exception ex)
         {
-            _contentText.text = "Failed to load quests.";
+            ClearCards();
+            SetStatus("Failed to load quests.");
             ResetScrollToTop();
             DozzleLogger.Error("Failed to load quests", ex);
         }
@@ -58,14 +77,52 @@ public class QuestPanelController : MonoBehaviour
         }
     }
 
+    private async System.Threading.Tasks.Task<UserAnimeStats> LoadUserAnimeStats()
+    {
+        var stats = new UserAnimeStats();
+        if (ApiClient.Instance == null || NakamaAuthManager.Instance == null || !NakamaAuthManager.Instance.IsAuthenticated)
+        {
+            return stats;
+        }
+
+        const int pageSize = 500;
+        for (int offset = 0; ; offset += pageSize)
+        {
+            string json = await ApiClient.Instance.GetUserAnime(string.Empty, pageSize, offset);
+            var response = JsonUtility.FromJson<UserAnimeResponse>(json);
+            if (response == null || response.items == null) break;
+
+            foreach (var item in response.items)
+            {
+                if (item == null) continue;
+                if (item.score > 0) stats.ratings += 1;
+                stats.episodes += Math.Max(item.episodesWatched, 0);
+                if (string.Equals(item.watchStatus, "completed", StringComparison.OrdinalIgnoreCase))
+                {
+                    stats.completedSeries += 1;
+                }
+            }
+
+            if (!response.hasMore || response.items.Length == 0) break;
+        }
+
+        return stats;
+    }
+
     private void EnsureTextElements()
     {
         if (_descriptionText == null)
         {
-            _descriptionText = CreateTextElement("QuestDescription", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(48f, -138f), new Vector2(-48f, -68f), 20, FontStyle.Bold);
+            _descriptionText = CreateTextElement("QuestDescription", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(48f, -138f), new Vector2(-48f, -90f), 18, FontStyle.Bold);
+            _descriptionText.text = "Weekly quests";
         }
 
-        if (_contentScrollRect == null || _contentText == null)
+        if (_statusText == null)
+        {
+            _statusText = CreateTextElement("QuestStatus", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(48f, -180f), new Vector2(-48f, -140f), 15, FontStyle.Normal);
+        }
+
+        if (_contentScrollRect == null || _content == null)
         {
             CreateScrollableContent();
         }
@@ -82,7 +139,7 @@ public class QuestPanelController : MonoBehaviour
         viewportRect.anchorMin = new Vector2(0f, 0f);
         viewportRect.anchorMax = new Vector2(1f, 1f);
         viewportRect.offsetMin = new Vector2(48f, 56f);
-        viewportRect.offsetMax = new Vector2(-48f, -170f);
+        viewportRect.offsetMax = new Vector2(-48f, -206f);
 
         var viewportImage = viewportObj.GetComponent<Image>();
         viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
@@ -97,35 +154,130 @@ public class QuestPanelController : MonoBehaviour
         _contentScrollRect.scrollSensitivity = 28f;
         _contentScrollRect.viewport = viewportRect;
 
-        var contentObj = new GameObject("QuestContent", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text), typeof(ContentSizeFitter));
+        var contentObj = new GameObject("QuestContent", typeof(RectTransform), typeof(CanvasRenderer), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
         contentObj.transform.SetParent(viewportObj.transform, false);
 
-        var contentRect = contentObj.GetComponent<RectTransform>();
-        contentRect.anchorMin = new Vector2(0f, 1f);
-        contentRect.anchorMax = new Vector2(1f, 1f);
-        contentRect.pivot = new Vector2(0.5f, 1f);
-        contentRect.offsetMin = new Vector2(12f, 0f);
-        contentRect.offsetMax = new Vector2(-12f, 0f);
+        _content = contentObj.GetComponent<RectTransform>();
+        _content.anchorMin = new Vector2(0f, 1f);
+        _content.anchorMax = new Vector2(1f, 1f);
+        _content.pivot = new Vector2(0.5f, 1f);
+        _content.offsetMin = Vector2.zero;
+        _content.offsetMax = Vector2.zero;
+
+        var layout = contentObj.GetComponent<VerticalLayoutGroup>();
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandWidth = true;
+        layout.childForceExpandHeight = false;
+        layout.spacing = 12f;
+        layout.padding = new RectOffset(8, 8, 8, 8);
 
         var fitter = contentObj.GetComponent<ContentSizeFitter>();
         fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-        _contentText = contentObj.GetComponent<Text>();
-        _contentText.fontSize = 18;
-        _contentText.fontStyle = FontStyle.Normal;
-        _contentText.resizeTextForBestFit = true;
-        _contentText.resizeTextMinSize = 12;
-        _contentText.resizeTextMaxSize = 18;
-        _contentText.color = new Color(0.17f, 0.10f, 0.04f, 1f);
-        _contentText.alignment = TextAnchor.UpperLeft;
-        _contentText.horizontalOverflow = HorizontalWrapMode.Wrap;
-        _contentText.verticalOverflow = VerticalWrapMode.Truncate;
-        _contentText.supportRichText = false;
-        _contentText.text = string.Empty;
-
-        _contentScrollRect.content = contentRect;
+        _contentScrollRect.content = _content;
         _contentScrollRect.verticalNormalizedPosition = 1f;
+    }
+
+    private void CreateQuestCard(QuestItem item, UserAnimeStats stats)
+    {
+        if (item == null || _content == null) return;
+
+        var cardObj = new GameObject($"QuestCard_{SafeName(item.code)}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement), typeof(VerticalLayoutGroup));
+        cardObj.transform.SetParent(_content, false);
+        cardObj.GetComponent<Image>().color = Color.clear;
+
+        var layoutElement = cardObj.GetComponent<LayoutElement>();
+        layoutElement.minHeight = 164f;
+        layoutElement.preferredHeight = 184f;
+
+        var layout = cardObj.GetComponent<VerticalLayoutGroup>();
+        layout.padding = new RectOffset(14, 14, 10, 10);
+        layout.spacing = 5f;
+        layout.childControlWidth = true;
+        layout.childControlHeight = true;
+        layout.childForceExpandHeight = false;
+
+        CreateRowLabel(cardObj.transform, Safe(item.title), 19, FontStyle.Bold, 26f);
+        CreateRowLabel(cardObj.transform, Safe(item.description), 14, FontStyle.Normal, 34f);
+        CreateRowLabel(cardObj.transform, BuildRequirementsText(item.requirements, stats), 13, FontStyle.Normal, 22f);
+        CreateRowLabel(cardObj.transform, BuildRewardsText(item.rewards), 13, FontStyle.Normal, 22f);
+        CreateProgressBar(cardObj.transform, CalculateProgress(item.requirements, stats));
+        CreateAcceptButton(cardObj.transform, item.code);
+    }
+
+    private void CreateProgressBar(Transform parent, float progress)
+    {
+        var rowObj = new GameObject("QuestProgressRow", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        rowObj.transform.SetParent(parent, false);
+        rowObj.GetComponent<LayoutElement>().minHeight = 28f;
+        var row = rowObj.GetComponent<HorizontalLayoutGroup>();
+        row.spacing = 10f;
+        row.childControlWidth = true;
+        row.childControlHeight = true;
+        row.childForceExpandWidth = false;
+        row.childForceExpandHeight = false;
+
+        var trackObj = new GameObject("QuestProgressTrack", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+        trackObj.transform.SetParent(rowObj.transform, false);
+        var trackLayout = trackObj.GetComponent<LayoutElement>();
+        trackLayout.minWidth = 360f;
+        trackLayout.preferredWidth = 520f;
+        trackLayout.minHeight = 20f;
+        trackLayout.preferredHeight = 20f;
+        trackObj.GetComponent<Image>().color = new Color(0.10f, 0.10f, 0.10f, 0.28f);
+
+        var fillObj = new GameObject("Fill", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        fillObj.transform.SetParent(trackObj.transform, false);
+        var fillRect = fillObj.GetComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = new Vector2(Mathf.Clamp01(progress), 1f);
+        fillRect.offsetMin = Vector2.zero;
+        fillRect.offsetMax = Vector2.zero;
+        fillObj.GetComponent<Image>().color = new Color(0.20f, 0.75f, 0.25f, 0.95f);
+
+        CreateRowLabel(rowObj.transform, $"{Mathf.RoundToInt(Mathf.Clamp01(progress) * 100f)}%", 14, FontStyle.Bold, 24f, width: 66f);
+    }
+
+    private void CreateAcceptButton(Transform parent, string questCode)
+    {
+        var buttonObj = new GameObject("AcceptButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        buttonObj.transform.SetParent(parent, false);
+        var layout = buttonObj.GetComponent<LayoutElement>();
+        layout.minWidth = 130f;
+        layout.preferredWidth = 150f;
+        layout.minHeight = 32f;
+        layout.preferredHeight = 32f;
+        buttonObj.GetComponent<Image>().color = new Color(0.86f, 0.76f, 0.50f, 1f);
+
+        var button = buttonObj.GetComponent<Button>();
+        button.onClick.AddListener(() => AcceptQuest(questCode));
+        CreateChildText(buttonObj.transform, "Text", "Accept", 14, FontStyle.Bold, TextAnchor.MiddleCenter, Color.black);
+    }
+
+    private Text CreateRowLabel(Transform parent, string value, int fontSize, FontStyle style, float minHeight, float width = 0f)
+    {
+        var obj = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text), typeof(LayoutElement));
+        obj.transform.SetParent(parent, false);
+        var layout = obj.GetComponent<LayoutElement>();
+        layout.minHeight = minHeight;
+        if (width > 0f)
+        {
+            layout.minWidth = width;
+            layout.preferredWidth = width;
+        }
+
+        var text = obj.GetComponent<Text>();
+        text.text = value;
+        text.font = ResolveFont();
+        text.fontSize = fontSize;
+        text.fontStyle = style;
+        text.alignment = TextAnchor.MiddleLeft;
+        text.color = QuestTextColor;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        return text;
     }
 
     private Text CreateTextElement(string name, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, int size, FontStyle style)
@@ -140,15 +292,45 @@ public class QuestPanelController : MonoBehaviour
         rect.offsetMax = offsetMax;
 
         var text = obj.GetComponent<Text>();
+        text.font = ResolveFont();
         text.fontSize = size;
         text.fontStyle = style;
         text.resizeTextForBestFit = true;
         text.resizeTextMinSize = Mathf.Max(12, size - 8);
         text.resizeTextMaxSize = size;
-        text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
+        text.color = QuestTextColor;
         text.alignment = TextAnchor.UpperLeft;
         text.text = string.Empty;
         return text;
+    }
+
+    private Text CreateChildText(Transform parent, string name, string value, int fontSize, FontStyle style, TextAnchor alignment, Color color)
+    {
+        var obj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        obj.transform.SetParent(parent, false);
+        var rect = obj.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        var text = obj.GetComponent<Text>();
+        text.text = value;
+        text.font = ResolveFont();
+        text.fontSize = fontSize;
+        text.fontStyle = style;
+        text.alignment = alignment;
+        text.color = color;
+        return text;
+    }
+
+    private void ClearCards()
+    {
+        if (_content == null) return;
+        for (int i = _content.childCount - 1; i >= 0; i--)
+        {
+            Destroy(_content.GetChild(i).gameObject);
+        }
     }
 
     private void ApplyFonts()
@@ -156,8 +338,10 @@ public class QuestPanelController : MonoBehaviour
         Font fontToUse = ResolveFont();
         if (fontToUse == null) return;
 
-        if (_descriptionText != null) _descriptionText.font = fontToUse;
-        if (_contentText != null) _contentText.font = fontToUse;
+        foreach (var label in GetComponentsInChildren<Text>(true))
+        {
+            label.font = fontToUse;
+        }
     }
 
     private Font ResolveFont()
@@ -184,34 +368,45 @@ public class QuestPanelController : MonoBehaviour
         return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
     }
 
-    private string FormatQuestsAsTable(string json)
+    private static float CalculateProgress(QuestRequirements requirements, UserAnimeStats stats)
     {
-        var response = JsonUtility.FromJson<QuestResponse>(json);
-        if (response == null || response.items == null || response.items.Length == 0)
-        {
-            return json;
-        }
+        if (requirements == null) return 1f;
 
-        var table = new StringBuilder();
-        table.AppendLine("Code | Title | Requirements | Rewards");
-        table.AppendLine("------------------------------------------------------------");
+        float total = 0f;
+        int parts = 0;
 
-        foreach (var item in response.items)
-        {
-            string requirements = item.requirements == null
-                ? "none"
-                : $"ratings: {item.requirements.ratings}, episodes: {item.requirements.episodes}, completed_series: {item.requirements.completed_series}";
+        AddRequirementProgress(requirements.ratings, stats.ratings, ref total, ref parts);
+        AddRequirementProgress(requirements.episodes, stats.episodes, ref total, ref parts);
+        AddRequirementProgress(requirements.completed_series, stats.completedSeries, ref total, ref parts);
 
-            string rewards = item.rewards == null
-                ? "none"
-                : $"xp: {item.rewards.xp}, coins: {item.rewards.coins}, item: {item.rewards.item}";
+        return parts == 0 ? 1f : Mathf.Clamp01(total / parts);
+    }
 
-            table.AppendLine($"{Safe(item.code)} | {Safe(item.title)} | {requirements} | {rewards}");
-            table.AppendLine($"  Description: {Safe(item.description)}");
-            table.AppendLine();
-        }
+    private static void AddRequirementProgress(int required, int current, ref float total, ref int parts)
+    {
+        if (required <= 0) return;
+        total += Mathf.Clamp01((float)Math.Max(current, 0) / required);
+        parts += 1;
+    }
 
-        return table.ToString().TrimEnd();
+    private static string BuildRequirementsText(QuestRequirements requirements, UserAnimeStats stats)
+    {
+        if (requirements == null) return "Requirements: none";
+        var parts = new List<string>();
+        if (requirements.ratings > 0) parts.Add($"ratings {Math.Min(stats.ratings, requirements.ratings)}/{requirements.ratings}");
+        if (requirements.episodes > 0) parts.Add($"episodes {Math.Min(stats.episodes, requirements.episodes)}/{requirements.episodes}");
+        if (requirements.completed_series > 0) parts.Add($"completed {Math.Min(stats.completedSeries, requirements.completed_series)}/{requirements.completed_series}");
+        return parts.Count == 0 ? "Requirements: none" : $"Requirements: {string.Join(" | ", parts)}";
+    }
+
+    private static string BuildRewardsText(QuestRewards rewards)
+    {
+        if (rewards == null) return "Rewards: none";
+        var parts = new List<string>();
+        if (rewards.xp > 0) parts.Add($"XP {rewards.xp}");
+        if (rewards.coins > 0) parts.Add($"Coins {rewards.coins}");
+        if (!string.IsNullOrWhiteSpace(rewards.item)) parts.Add(rewards.item);
+        return parts.Count == 0 ? "Rewards: none" : $"Rewards: {string.Join(" | ", parts)}";
     }
 
     private static string Safe(string value)
@@ -219,11 +414,43 @@ public class QuestPanelController : MonoBehaviour
         return string.IsNullOrWhiteSpace(value) ? "-" : value.Replace("\n", " ").Trim();
     }
 
+    private static string SafeName(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "unknown" : value.Replace(" ", "_").Replace("/", "_");
+    }
+
+    private void SetStatus(string value)
+    {
+        if (_statusText != null) _statusText.text = value;
+    }
+
     private void ResetScrollToTop()
     {
         if (_contentScrollRect == null) return;
         Canvas.ForceUpdateCanvases();
         _contentScrollRect.verticalNormalizedPosition = 1f;
+    }
+
+    private class UserAnimeStats
+    {
+        public int ratings;
+        public int episodes;
+        public int completedSeries;
+    }
+
+    [Serializable]
+    private class UserAnimeResponse
+    {
+        public UserAnimeItem[] items;
+        public bool hasMore;
+    }
+
+    [Serializable]
+    private class UserAnimeItem
+    {
+        public string watchStatus;
+        public int score;
+        public int episodesWatched;
     }
 
     [Serializable]
@@ -235,6 +462,7 @@ public class QuestPanelController : MonoBehaviour
     [Serializable]
     private class QuestItem
     {
+        public string id;
         public string code;
         public string title;
         public string description;

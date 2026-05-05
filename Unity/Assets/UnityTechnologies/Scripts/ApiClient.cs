@@ -7,10 +7,15 @@ using System.Globalization;
 
 public class ApiClient : MonoBehaviour
 {
+    public const string SessionConflictMarker = "SESSION_CONFLICT";
     public static ApiClient Instance;
 
     [SerializeField] private string baseUrl = "http://localhost:3000";
     [SerializeField] private bool autoResolveLocalhost = true;
+
+    private readonly string _clientInstanceId = Guid.NewGuid().ToString("N");
+
+    public string ClientInstanceId => _clientInstanceId;
 
     private void Awake()
     {
@@ -24,13 +29,21 @@ public class ApiClient : MonoBehaviour
             baseUrl = ResolveBaseUrlForRuntime(baseUrl);
         }
 
+        DozzleLogger.Action("API base URL resolved", baseUrl);
         DozzleLogger.FlushPending();
     }
 
     private static string ResolveBaseUrlForRuntime(string rawUrl)
     {
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri)) return rawUrl;
-        if (!string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return rawUrl;
+        if (!IsLocalhost(uri.Host)) return rawUrl;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (TryResolveHostedServiceUrl("api", out string hostedApiUrl))
+        {
+            return hostedApiUrl;
+        }
+#endif
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         string runtimeHost = "10.0.2.2";
@@ -39,6 +52,41 @@ public class ApiClient : MonoBehaviour
 #endif
 
         return string.Format(CultureInfo.InvariantCulture, "{0}://{1}:{2}", uri.Scheme, runtimeHost, uri.Port);
+    }
+
+    private static bool IsLocalhost(string host)
+    {
+        return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(host, "::1", StringComparison.OrdinalIgnoreCase);
+    }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+    private static bool TryResolveHostedServiceUrl(string serviceSubdomain, out string serviceUrl)
+    {
+        serviceUrl = null;
+        if (!Uri.TryCreate(Application.absoluteURL, UriKind.Absolute, out var pageUri)) return false;
+        if (IsLocalhost(pageUri.Host)) return false;
+
+        string host = pageUri.Host;
+        if (host.StartsWith("play.", StringComparison.OrdinalIgnoreCase))
+        {
+            host = serviceSubdomain + "." + host.Substring("play.".Length);
+        }
+        else if (!host.StartsWith(serviceSubdomain + ".", StringComparison.OrdinalIgnoreCase))
+        {
+            host = serviceSubdomain + "." + host;
+        }
+
+        serviceUrl = string.Format(CultureInfo.InvariantCulture, "{0}://{1}", pageUri.Scheme, host);
+        return true;
+    }
+#endif
+
+    public string BuildImageProxyUrl(string imageUrl)
+    {
+        if (string.IsNullOrWhiteSpace(imageUrl)) return imageUrl;
+        return $"{baseUrl}/client/image?url={UnityWebRequest.EscapeURL(imageUrl)}";
     }
 
     private string AuthToken => NakamaAuthManager.Instance.Session?.AuthToken;
@@ -88,6 +136,44 @@ public class ApiClient : MonoBehaviour
             throw new Exception(req.error + " | " + req.downloadHandler.text);
 
         return req.downloadHandler.text;
+    }
+
+    public async Task AcquireSessionLease()
+    {
+        await SendSessionLeaseRequest("acquire", throwConflict: true);
+    }
+
+    public async Task HeartbeatSessionLease()
+    {
+        await SendSessionLeaseRequest("heartbeat", throwConflict: true);
+    }
+
+    public async Task ReleaseSessionLease()
+    {
+        await SendSessionLeaseRequest("release", throwConflict: false);
+    }
+
+    private async Task SendSessionLeaseRequest(string action, bool throwConflict)
+    {
+        string body = JsonUtility.ToJson(new SessionLeaseBody
+        {
+            clientId = _clientInstanceId,
+            platform = Application.platform.ToString(),
+            unityVersion = Application.unityVersion,
+        });
+
+        var req = CreateRequest($"{baseUrl}/client/session/{action}", UnityWebRequest.kHttpVerbPOST, body);
+        await req.SendWebRequest();
+
+        if (req.result == UnityWebRequest.Result.Success) return;
+
+        string responseText = req.downloadHandler != null ? req.downloadHandler.text : string.Empty;
+        if (throwConflict && req.responseCode == 409)
+        {
+            throw new Exception($"{SessionConflictMarker}: This account is already logged in on another device.");
+        }
+
+        throw new Exception(req.error + " | " + responseText);
     }
 
     public async Task<string> GetAnime(string q = "", int limit = 100, int offset = 0)
@@ -244,6 +330,14 @@ public class ApiClient : MonoBehaviour
         public string details;
         public string message;
         public string timestamp;
+        public string platform;
+        public string unityVersion;
+    }
+
+    [Serializable]
+    private class SessionLeaseBody
+    {
+        public string clientId;
         public string platform;
         public string unityVersion;
     }
