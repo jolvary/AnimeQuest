@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
@@ -5,6 +6,9 @@ using UnityEngine.UI;
 
 public class TableViewerPanelController : MonoBehaviour
 {
+    private const int MaxVisibleCharacters = 10000;
+    private const int AllTablesPreviewLimit = 10;
+
     public Font preferredFont;
 
     [SerializeField]
@@ -33,10 +37,10 @@ public class TableViewerPanelController : MonoBehaviour
     {
         EnsureTextElements();
 
-        if (string.Equals(tableName, "all", System.StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(tableName, "all", StringComparison.OrdinalIgnoreCase))
         {
-            _descriptionText.text = "Database viewer: combined dump for all configured tables.";
-            _contentText.text = "Loading all tables...";
+            _descriptionText.text = $"Database viewer: preview for all configured tables ({AllTablesPreviewLimit} rows each).";
+            SetContentText("Loading all tables...");
 
             var builder = new StringBuilder();
             foreach (var table in defaultTables)
@@ -44,35 +48,35 @@ public class TableViewerPanelController : MonoBehaviour
                 builder.AppendLine($"\n===== {table.ToUpperInvariant()} =====");
                 try
                 {
-                    string tableJson = await ApiClient.Instance.GetTable(table, 50, 0);
+                    string tableJson = await ApiClient.Instance.GetTable(table, AllTablesPreviewLimit, 0);
                     builder.AppendLine(tableJson);
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
                     builder.AppendLine($"Failed to load {table}: {ex.Message}");
                 }
             }
 
             string allTablesData = builder.ToString();
-            _contentText.text = allTablesData;
+            SetContentText(allTablesData);
             ResetScrollToTop();
-            Debug.Log("All tables: " + allTablesData);
+            Debug.Log($"All tables preview loaded. totalCharacters={allTablesData.Length};visibleCharacters={_contentText.text.Length}");
             return;
         }
 
         _descriptionText.text = $"Database viewer: table '{tableName}' (read-only sample rows).";
-        _contentText.text = $"Loading table {tableName}...";
+        SetContentText($"Loading table {tableName}...");
 
         try
         {
             string json = await ApiClient.Instance.GetTable(tableName, 50, 0);
-            _contentText.text = json;
+            SetContentText(json);
             ResetScrollToTop();
-            Debug.Log($"Table {tableName}: " + json);
+            Debug.Log($"Table {tableName} loaded. totalCharacters={json.Length};visibleCharacters={_contentText.text.Length}");
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
-            _contentText.text = "Failed to load table.";
+            SetContentText("Failed to load table.");
             ResetScrollToTop();
             Debug.LogError("Failed to load table: " + ex.Message);
         }
@@ -136,9 +140,7 @@ public class TableViewerPanelController : MonoBehaviour
         _contentText = contentObj.GetComponent<Text>();
         _contentText.fontSize = 18;
         _contentText.fontStyle = FontStyle.Normal;
-        _contentText.resizeTextForBestFit = true;
-        _contentText.resizeTextMinSize = 12;
-        _contentText.resizeTextMaxSize = 18;
+        _contentText.resizeTextForBestFit = false;
         _contentText.color = new Color(0.17f, 0.10f, 0.04f, 1f);
         _contentText.alignment = TextAnchor.UpperLeft;
         _contentText.text = string.Empty;
@@ -171,6 +173,21 @@ public class TableViewerPanelController : MonoBehaviour
         return text;
     }
 
+    private void SetContentText(string value)
+    {
+        if (_contentText == null) return;
+
+        if (string.IsNullOrEmpty(value) || value.Length <= MaxVisibleCharacters)
+        {
+            _contentText.text = value ?? string.Empty;
+            return;
+        }
+
+        string suffix = $"\n\n... Output shortened in the in-game viewer ({value.Length} characters returned). Use a narrower table or API/database tooling for the full dump.";
+        int visibleLength = Mathf.Max(0, MaxVisibleCharacters - suffix.Length);
+        _contentText.text = value.Substring(0, visibleLength) + suffix;
+    }
+
     private void ApplyFonts()
     {
         Font fontToUse = ResolveFont();
@@ -187,7 +204,7 @@ public class TableViewerPanelController : MonoBehaviour
         Font[] loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
         foreach (var loadedFont in loadedFonts)
         {
-            if (loadedFont != null && loadedFont.name.IndexOf("BMYEONSUNG", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            if (loadedFont != null && loadedFont.name.IndexOf("BMYEONSUNG", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return loadedFont;
             }
@@ -209,7 +226,16 @@ public class TableViewerPanelController : MonoBehaviour
     private void ResetScrollToTop()
     {
         if (_contentScrollRect == null) return;
-        Canvas.ForceUpdateCanvases();
+
+        try
+        {
+            Canvas.ForceUpdateCanvases();
+        }
+        catch (ArgumentException ex)
+        {
+            Debug.LogWarning("Table viewer skipped one canvas refresh because the text mesh was too large: " + ex.Message);
+        }
+
         _contentScrollRect.verticalNormalizedPosition = 1f;
     }
 }

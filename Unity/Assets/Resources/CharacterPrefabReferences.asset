@@ -1,0 +1,24 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d8cc0821af3b4d8aa177d2b86a6378d3, type: 3}
+  m_Name: CharacterPrefabReferences
+  m_EditorClassIdentifier: 
+  ghostCharacterPrefab: {fileID: 100100000, guid: 8ee08d04ad5df46fbb2e97260b63420b, type: 3}
+  skeletonPrefab: {fileID: 0}
+  tinyHeroPrefab: {fileID: 100100000, guid: c564c8c0d0cdc45429417f315e9f3e41, type: 3}
+  tinyHeroMalePbrPrefab: {fileID: 100100000, guid: 2dfbb63c9cdf7504faf4ff26b0581598, type: 3}
+  tinyHeroFemalePbrPrefab: {fileID: 100100000, guid: cc91c8ba8b9a34f4d99e70d721f60b64, type: 3}
+  robotHeroPrefab: {fileID: 0}
+  sciFiHpCharacterPrefab: {fileID: 100100000, guid: c98043d57e0190845b790d7b92990bee, type: 3}
+  sciFiPbrCharacterPrefab: {fileID: 100100000, guid: f432554f564e69242897607d34218939, type: 3}
+  sciFiPolyartCharacterPrefab: {fileID: 100100000, guid: 910177ec26b76c14996c2d53627a6def, type: 3}
+  sampleHeroPrefab: {fileID: 100100000, guid: 257c304c754d3b247a51ef5bea7a90d0, type: 3}

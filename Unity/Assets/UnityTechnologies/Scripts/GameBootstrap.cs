@@ -47,9 +47,24 @@ public class GameBootstrap : MonoBehaviour
         ApplyPanelSafeAreaLayout();
         MaintainSessionLease();
 
-        if (Keyboard.current == null || IsTextInputFocused()) return;
+        if (Keyboard.current == null) return;
 
-        if (Keyboard.current.escapeKey.wasPressedThisFrame || Keyboard.current.mKey.wasPressedThisFrame)
+        if (Keyboard.current.escapeKey.wasPressedThisFrame)
+        {
+            if (uiManager != null && uiManager.HasAnyPanelOpen())
+            {
+                uiManager.HideAll();
+                DozzleLogger.Action("Panel closed with Escape");
+                return;
+            }
+
+            ToggleMainMenu();
+            return;
+        }
+
+        if (IsTextInputFocused()) return;
+
+        if (Keyboard.current.mKey.wasPressedThisFrame)
         {
             ToggleMainMenu();
         }

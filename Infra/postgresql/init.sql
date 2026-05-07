@@ -3,6 +3,17 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE users (
   user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   display_name TEXT NOT NULL CHECK (char_length(display_name) >= 1),
+  experience_points INT NOT NULL DEFAULT 0 CHECK (experience_points >= 0),
+  level INT NOT NULL DEFAULT 1 CHECK (level >= 1),
+  coins INT NOT NULL DEFAULT 0 CHECK (coins >= 0),
+  unlocked_characters TEXT[] NOT NULL DEFAULT ARRAY['robot_kyle'],
+  selected_character_key TEXT NOT NULL DEFAULT 'robot_kyle',
+  robot_color TEXT NOT NULL DEFAULT 'default',
+  last_position_x DOUBLE PRECISION,
+  last_position_y DOUBLE PRECISION,
+  last_position_z DOUBLE PRECISION,
+  last_rotation_y DOUBLE PRECISION,
+  last_position_updated_at TIMESTAMP,
   mal_user_id TEXT,
   mal_username TEXT,
   mal_access_token TEXT,
@@ -12,6 +23,7 @@ CREATE TABLE users (
 );
 
 CREATE INDEX idx_users_display_name ON users(display_name);
+CREATE INDEX idx_users_level ON users(level);
 
 CREATE TABLE anime (
   anime_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -96,10 +108,10 @@ CREATE TABLE user_achievements (
 CREATE INDEX idx_user_achievements_status ON user_achievements(status);
 CREATE INDEX idx_user_achievements_unlocked_at ON user_achievements(unlocked_at);
 
-INSERT INTO users (user_id, display_name) VALUES
-  ('11111111-1111-1111-1111-111111111111', 'Akira'),
-  ('22222222-2222-2222-2222-222222222222', 'Mina'),
-  ('33333333-3333-3333-3333-333333333333', 'Rin')
+INSERT INTO users (user_id, display_name, experience_points, level, coins, unlocked_characters, selected_character_key, robot_color) VALUES
+  ('11111111-1111-1111-1111-111111111111', 'Akira', 60, 1, 100, ARRAY['robot_kyle', 'robot_blue'], 'robot_blue', 'blue'),
+  ('22222222-2222-2222-2222-222222222222', 'Mina', 140, 2, 250, ARRAY['robot_kyle', 'robot_blue', 'robot_green'], 'robot_green', 'green'),
+  ('33333333-3333-3333-3333-333333333333', 'Rin', 0, 1, 0, ARRAY['robot_kyle'], 'robot_kyle', 'default')
 ON CONFLICT (user_id) DO NOTHING;
 
 INSERT INTO anime (provider, provider_id, title, genres, episodes, year, trailer_youtube_id) VALUES
@@ -109,10 +121,10 @@ INSERT INTO anime (provider, provider_id, title, genres, episodes, year, trailer
 ON CONFLICT (provider, provider_id) DO NOTHING;
 
 INSERT INTO quests (code, title, description, requirements, rewards) VALUES
-  ('watch_5_eps', 'Warm-up Marathon', 'Watch five anime episodes this week.', '{"episodes":5}'::jsonb, '{"xp":50,"coins":100}'::jsonb),
-  ('rate_3_titles', 'Critic Apprentice', 'Rate three different anime titles.', '{"ratings":3}'::jsonb, '{"xp":40,"item":"review_badge"}'::jsonb),
-  ('complete_series', 'Finale Hunter', 'Complete one anime series.', '{"completed_series":1}'::jsonb, '{"xp":100,"coins":250}'::jsonb)
-ON CONFLICT (code) DO NOTHING;
+  ('watch_5_eps', 'Warm-up Marathon', 'Watch five anime episodes this week.', '{"episodes":5}'::jsonb, '{"xp":50,"coins":100,"character":"robot_blue"}'::jsonb),
+  ('rate_3_titles', 'Critic Apprentice', 'Rate three different anime titles.', '{"ratings":3}'::jsonb, '{"xp":40,"item":"review_badge","character":"robot_green"}'::jsonb),
+  ('complete_series', 'Finale Hunter', 'Complete one anime series.', '{"completed_series":1}'::jsonb, '{"xp":100,"coins":250,"character":"ghost_character"}'::jsonb)
+ON CONFLICT (code) DO UPDATE SET rewards = EXCLUDED.rewards;
 
 INSERT INTO watch_entries (user_id, anime_id, status, score, episodes_watched, updated_at)
 SELECT

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading.Tasks;
 using Nakama;
 using UnityEngine;
@@ -16,6 +17,8 @@ public class NakamaChatPanelController : MonoBehaviour
 
     public Font preferredFont;
     public string defaultRoomName = "animequest-lobby";
+
+    public static event Action<string> ChatMessageReceived;
 
     private Text _titleText;
     private Text _statusText;
@@ -34,6 +37,19 @@ public class NakamaChatPanelController : MonoBehaviour
     private readonly List<string> _renderedMessageIds = new List<string>();
     private readonly List<ChatDisplayMessage> _pendingMessages = new List<ChatDisplayMessage>();
     private readonly object _pendingMessagesLock = new object();
+
+    public string CurrentChannelKey => _activeChannelKey;
+    public string GeneralChannelKey => BuildRoomChannelKey(defaultRoomName);
+
+    public static string BuildRoomChannelKey(string roomName)
+    {
+        return $"room:{NormalizeChannelName(roomName, "animequest-lobby")}";
+    }
+
+    public static string BuildDirectChannelKey(string userId)
+    {
+        return $"dm:{NormalizeChannelName(userId, "unknown")}";
+    }
 
     public void ConfigureFont(Font font)
     {
@@ -58,6 +74,10 @@ public class NakamaChatPanelController : MonoBehaviour
 
     private void OnDisable()
     {
+    }
+
+    private void OnDestroy()
+    {
         UnsubscribeFromSocket();
     }
 
@@ -68,7 +88,7 @@ public class NakamaChatPanelController : MonoBehaviour
 
     public async void OpenGeneralChat()
     {
-        string channelKey = $"room:{defaultRoomName}";
+        string channelKey = GeneralChannelKey;
         if (_channel != null && string.Equals(_activeChannelKey, channelKey, StringComparison.Ordinal))
         {
             RefreshSendState();
@@ -85,7 +105,7 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
-        string channelKey = $"room:{defaultRoomName}";
+        string channelKey = GeneralChannelKey;
         if (_channel != null && string.Equals(_activeChannelKey, channelKey, StringComparison.Ordinal))
         {
             return;
@@ -103,7 +123,7 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
-        string channelKey = $"dm:{userId}";
+        string channelKey = BuildDirectChannelKey(userId);
         string label = string.IsNullOrWhiteSpace(username) ? "Direct Chat" : $"Chat with {username}";
 
         if (_channel != null && string.Equals(_activeChannelKey, channelKey, StringComparison.Ordinal))
@@ -396,6 +416,11 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
+        if (!IsFromCurrentUser(message))
+        {
+            ChatMessageReceived?.Invoke(NormalizeChannelName(_activeChannelKey, message.ChannelId));
+        }
+
         EnqueueMessage(ToDisplayMessage(message));
     }
 
@@ -446,6 +471,36 @@ public class NakamaChatPanelController : MonoBehaviour
             username = message.Username,
             content = message.Content,
         };
+    }
+
+    private static bool IsFromCurrentUser(IApiChannelMessage message)
+    {
+        if (message == null || !TryGetSessionAuth(out var auth) || auth.Session == null) return false;
+
+        string senderId = ReadStringProperty(message, "SenderId");
+        if (!string.IsNullOrWhiteSpace(senderId) && !string.IsNullOrWhiteSpace(auth.Session.UserId))
+        {
+            return string.Equals(senderId, auth.Session.UserId, StringComparison.Ordinal);
+        }
+
+        if (string.IsNullOrWhiteSpace(message.Username) || string.IsNullOrWhiteSpace(auth.Session.Username)) return false;
+        return string.Equals(message.Username, auth.Session.Username, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ReadStringProperty(object target, string propertyName)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(propertyName)) return null;
+
+        try
+        {
+            return target.GetType()
+                .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public)
+                ?.GetValue(target) as string;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void RenderMessage(ChatDisplayMessage message)
@@ -759,6 +814,11 @@ public class NakamaChatPanelController : MonoBehaviour
     {
         auth = NakamaAuthManager.Instance;
         return auth != null && auth.IsAuthenticated && auth.Client != null && auth.Session != null;
+    }
+
+    private static string NormalizeChannelName(string value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     private static string ExtractMessageText(string rawContent)

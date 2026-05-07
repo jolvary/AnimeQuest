@@ -11,6 +11,8 @@ using UnityEditor;
 
 public class UIManager : MonoBehaviour
 {
+    private const int MaxChatBadgeCount = 99;
+
     [Header("Panels")]
     public GameObject chatPanel;
     public GameObject friendsPanel;
@@ -43,6 +45,12 @@ public class UIManager : MonoBehaviour
 
     private bool _isUiInteractionEnabled;
     private GameObject _panelToolbar;
+    private Button _chatToolbarButton;
+    private GameObject _chatNotificationBadge;
+    private Text _chatNotificationBadgeText;
+    private readonly Dictionary<string, int> _chatUnreadByChannel = new Dictionary<string, int>();
+    private readonly Dictionary<string, int> _pendingChatNotificationsByChannel = new Dictionary<string, int>();
+    private readonly object _chatNotificationLock = new object();
     private GameObject _mobileControls;
     private GameObject _webGlPointerLockOverlay;
     private bool _webGlPointerLockReady;
@@ -56,11 +64,13 @@ public class UIManager : MonoBehaviour
     private void OnEnable()
     {
         DozzleLogger.ErrorReported += QueueErrorAlert;
+        NakamaChatPanelController.ChatMessageReceived += QueueChatNotification;
     }
 
     private void OnDisable()
     {
         DozzleLogger.ErrorReported -= QueueErrorAlert;
+        NakamaChatPanelController.ChatMessageReceived -= QueueChatNotification;
     }
 
     private void Start()
@@ -89,6 +99,7 @@ public class UIManager : MonoBehaviour
     private void Update()
     {
         UpdateErrorAlert();
+        FlushChatNotifications();
         MaintainWebGlPointerLockState();
         RefreshOverlayVisibility();
 
@@ -101,6 +112,11 @@ public class UIManager : MonoBehaviour
         if (Keyboard.current.uKey.wasPressedThisFrame) OpenUserCatalogPanel();
         if (Keyboard.current.nKey.wasPressedThisFrame) OpenMatchingPanel();
         if (Keyboard.current.tKey.wasPressedThisFrame) OpenTablePanel("all");
+    }
+
+    public bool HasAnyPanelOpen()
+    {
+        return IsAnyPanelOpen();
     }
 
     public void OpenQuestsPanel()
@@ -141,9 +157,11 @@ public class UIManager : MonoBehaviour
     public void OpenChatPanel()
     {
         EnsureChatPanel();
+        string channelKey = chatPanelController != null ? chatPanelController.GeneralChannelKey : NakamaChatPanelController.BuildRoomChannelKey("animequest-lobby");
         bool isOpening = ToggleExclusive(chatPanel);
         if (isOpening)
         {
+            ClearChatNotificationBadge(channelKey);
             chatPanelController?.OpenGeneralChat();
         }
     }
@@ -157,6 +175,8 @@ public class UIManager : MonoBehaviour
     public void OpenChatPanelForUser(string userId, string username)
     {
         EnsureChatPanel();
+        string channelKey = NakamaChatPanelController.BuildDirectChannelKey(userId);
+        ClearChatNotificationBadge(channelKey);
         HideAll();
         if (chatPanel != null)
         {
@@ -508,7 +528,9 @@ public class UIManager : MonoBehaviour
         CreatePanelIconButton("Icon_UserCatalog", "U", OpenUserCatalogPanel);
         CreatePanelIconButton("Icon_Quests", "Q", OpenQuestsPanel);
         CreatePanelIconButton("Icon_Friends", "F", OpenFriendsPanel);
-        CreatePanelIconButton("Icon_Chat", "C", OpenChatPanel);
+        _chatToolbarButton = CreatePanelIconButton("Icon_Chat", "C", OpenChatPanel);
+        EnsureChatNotificationBadge();
+        RefreshChatNotificationBadge();
         CreatePanelIconButton("Icon_Matching", "M", OpenMatchingPanel);
         CreatePanelIconButton("Icon_Tables", "T", () => OpenTablePanel("all"));
     }
@@ -549,6 +571,132 @@ public class UIManager : MonoBehaviour
         text.raycastTarget = false;
 
         return button;
+    }
+
+    private void QueueChatNotification(string channelKey)
+    {
+        string key = NormalizeChatChannelKey(channelKey);
+        lock (_chatNotificationLock)
+        {
+            _pendingChatNotificationsByChannel.TryGetValue(key, out int current);
+            _pendingChatNotificationsByChannel[key] = current + 1;
+        }
+    }
+
+    private void FlushChatNotifications()
+    {
+        Dictionary<string, int> pending;
+        lock (_chatNotificationLock)
+        {
+            if (_pendingChatNotificationsByChannel.Count == 0) return;
+            pending = new Dictionary<string, int>(_pendingChatNotificationsByChannel);
+            _pendingChatNotificationsByChannel.Clear();
+        }
+
+        foreach (var item in pending)
+        {
+            string key = NormalizeChatChannelKey(item.Key);
+            if (!IsChatPanelVisible() || !IsActiveChatChannel(key))
+            {
+                _chatUnreadByChannel.TryGetValue(key, out int current);
+                _chatUnreadByChannel[key] = Mathf.Min(MaxChatBadgeCount, current + item.Value);
+            }
+        }
+
+        RefreshChatNotificationBadge();
+    }
+
+    private void ClearChatNotificationBadge(string channelKey)
+    {
+        string key = NormalizeChatChannelKey(channelKey);
+        lock (_chatNotificationLock)
+        {
+            _pendingChatNotificationsByChannel.Remove(key);
+        }
+
+        _chatUnreadByChannel.Remove(key);
+        RefreshChatNotificationBadge();
+    }
+
+    private void EnsureChatNotificationBadge()
+    {
+        if (_chatToolbarButton == null || _chatNotificationBadge != null) return;
+
+        _chatNotificationBadge = new GameObject("NotificationBadge", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        _chatNotificationBadge.transform.SetParent(_chatToolbarButton.transform, false);
+        _chatNotificationBadge.transform.SetAsLastSibling();
+
+        var rect = _chatNotificationBadge.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(1f, 1f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = new Vector2(4f, -4f);
+        rect.sizeDelta = new Vector2(24f, 24f);
+
+        var image = _chatNotificationBadge.GetComponent<Image>();
+        image.color = new Color(0.86f, 0.07f, 0.05f, 0.96f);
+        image.raycastTarget = false;
+
+        var labelObject = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        labelObject.transform.SetParent(_chatNotificationBadge.transform, false);
+        var labelRect = labelObject.GetComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        _chatNotificationBadgeText = labelObject.GetComponent<Text>();
+        _chatNotificationBadgeText.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        _chatNotificationBadgeText.alignment = TextAnchor.MiddleCenter;
+        _chatNotificationBadgeText.fontSize = 13;
+        _chatNotificationBadgeText.fontStyle = FontStyle.Bold;
+        _chatNotificationBadgeText.color = Color.white;
+        _chatNotificationBadgeText.raycastTarget = false;
+        _chatNotificationBadge.SetActive(false);
+    }
+
+    private void RefreshChatNotificationBadge()
+    {
+        if (_chatToolbarButton == null) return;
+
+        EnsureChatNotificationBadge();
+        if (_chatNotificationBadge == null || _chatNotificationBadgeText == null) return;
+
+        int unread = GetTotalChatUnreadCount();
+        bool hasUnread = unread > 0;
+        _chatNotificationBadge.SetActive(hasUnread);
+        if (hasUnread)
+        {
+            _chatNotificationBadgeText.text = unread >= MaxChatBadgeCount ? "99+" : unread.ToString();
+        }
+    }
+
+    private int GetTotalChatUnreadCount()
+    {
+        int total = 0;
+        foreach (var value in _chatUnreadByChannel.Values)
+        {
+            total += Mathf.Max(0, value);
+            if (total >= MaxChatBadgeCount) return MaxChatBadgeCount;
+        }
+
+        return total;
+    }
+
+    private bool IsChatPanelVisible()
+    {
+        return chatPanel != null && chatPanel.activeInHierarchy;
+    }
+
+    private bool IsActiveChatChannel(string channelKey)
+    {
+        return chatPanelController != null &&
+               string.Equals(chatPanelController.CurrentChannelKey, NormalizeChatChannelKey(channelKey), StringComparison.Ordinal);
+    }
+
+    private static string NormalizeChatChannelKey(string channelKey)
+    {
+        return string.IsNullOrWhiteSpace(channelKey) ? "chat" : channelKey.Trim();
     }
 
     private void EnsureMobileControls()

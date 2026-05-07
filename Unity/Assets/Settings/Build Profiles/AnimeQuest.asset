@@ -20,8 +20,11 @@ MonoBehaviour:
     rid: 1213855450492043494
   m_OverrideGlobalSceneList: 1
   m_Scenes:
+  - m_enabled: 0
+    m_path: Assets/Scenes/AnimeQuestGame.unity
   - m_enabled: 1
-    m_path: Assets/AnimeQuestGame.unity
+    m_path: Assets/SimplePoly City - Low Poly Assets/Demo/SimplePoly City - Low Poly
+      Assets_Demo Scene.unity
   m_HasScriptingDefines: 0
   m_ScriptingDefines: []
   m_PlayerSettingsYaml:

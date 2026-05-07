@@ -11,6 +11,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
     private static readonly Color DeckSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.22f);
     private static readonly Color DeckInputColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
     private const int MaxPosterFailureLogs = 10;
+    private const int UnknownEpisodeCap = 9999;
+    private const float DeckCardHeight = 218f;
     private static int PosterFailureLogCount;
 
     public string defaultSearch = "";
@@ -124,8 +126,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
                 "AnimeDescription",
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
-                new Vector2(48f, -118f),
-                new Vector2(-48f, -62f),
+                new Vector2(74f, -122f),
+                new Vector2(-60f, -66f),
                 20,
                 FontStyle.Bold
             );
@@ -142,7 +144,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
                 "AnimeStatus",
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
-                new Vector2(48f, -214f),
+                new Vector2(74f, -214f),
                 new Vector2(-372f, -178f),
                 16,
                 FontStyle.Normal
@@ -171,8 +173,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         _searchBar = searchObj.GetComponent<RectTransform>();
         _searchBar.anchorMin = new Vector2(0f, 1f);
         _searchBar.anchorMax = new Vector2(1f, 1f);
-        _searchBar.offsetMin = new Vector2(68f, -170f);
-        _searchBar.offsetMax = new Vector2(-88f, -148f);
+        _searchBar.offsetMin = new Vector2(84f, -168f);
+        _searchBar.offsetMax = new Vector2(-96f, -146f);
 
         var layout = searchObj.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -290,8 +292,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         _pagingBar = pagingObj.GetComponent<RectTransform>();
         _pagingBar.anchorMin = new Vector2(1f, 1f);
         _pagingBar.anchorMax = new Vector2(1f, 1f);
-        _pagingBar.offsetMin = new Vector2(-448f, -218f);
-        _pagingBar.offsetMax = new Vector2(-88f, -180f);
+        _pagingBar.offsetMin = new Vector2(-432f, -218f);
+        _pagingBar.offsetMax = new Vector2(-96f, -180f);
 
         var layout = pagingObj.GetComponent<HorizontalLayoutGroup>();
         layout.spacing = 8f;
@@ -374,8 +376,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         var viewportRect = viewportObj.GetComponent<RectTransform>();
         viewportRect.anchorMin = new Vector2(0f, 0f);
         viewportRect.anchorMax = new Vector2(1f, 1f);
-        viewportRect.offsetMin = new Vector2(48f, 48f);
-        viewportRect.offsetMax = new Vector2(-68f, -232f);
+        viewportRect.offsetMin = new Vector2(58f, 70f);
+        viewportRect.offsetMax = new Vector2(-76f, -242f);
 
         var viewportImage = viewportObj.GetComponent<Image>();
         viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
@@ -406,7 +408,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         layout.childControlHeight = true;
         layout.childForceExpandHeight = false;
         layout.spacing = 12f;
-        layout.padding = new RectOffset(8, 8, 8, 8);
+        layout.padding = new RectOffset(8, 8, 8, 18);
 
         var fitter = contentObj.GetComponent<ContentSizeFitter>();
         fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
@@ -443,14 +445,14 @@ public class AnimeCatalogPanelController : MonoBehaviour
         card.transform.SetParent(_deckContent, false);
 
         var cardRect = card.GetComponent<RectTransform>();
-        cardRect.sizeDelta = new Vector2(0f, 156f);
+        cardRect.sizeDelta = new Vector2(0f, DeckCardHeight);
 
         var cardImage = card.GetComponent<Image>();
         cardImage.color = DeckSurfaceColor;
 
         var cardLayout = card.GetComponent<LayoutElement>();
-        cardLayout.minHeight = 156f;
-        cardLayout.preferredHeight = 156f;
+        cardLayout.minHeight = DeckCardHeight;
+        cardLayout.preferredHeight = DeckCardHeight;
 
         var row = new GameObject("Row", typeof(RectTransform), typeof(HorizontalLayoutGroup));
         row.transform.SetParent(card.transform, false);
@@ -462,7 +464,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         rowRect.offsetMax = new Vector2(-12f, -12f);
 
         var rowLayout = row.GetComponent<HorizontalLayoutGroup>();
-        rowLayout.spacing = 12f;
+        rowLayout.spacing = 16f;
         rowLayout.childControlWidth = true;
         rowLayout.childControlHeight = true;
         rowLayout.childForceExpandWidth = false;
@@ -482,10 +484,10 @@ public class AnimeCatalogPanelController : MonoBehaviour
         posterObj.transform.SetParent(parent, false);
 
         var layout = posterObj.GetComponent<LayoutElement>();
-        layout.minWidth = 72f;
-        layout.preferredWidth = 72f;
+        layout.minWidth = 82f;
+        layout.preferredWidth = 82f;
         layout.flexibleWidth = 0f;
-        layout.preferredHeight = 108f;
+        layout.preferredHeight = 124f;
 
         var poster = posterObj.GetComponent<RawImage>();
         poster.color = new Color(0.87f, 0.82f, 0.72f, 1f);
@@ -515,18 +517,11 @@ public class AnimeCatalogPanelController : MonoBehaviour
         vLayout.childControlHeight = true;
         vLayout.childForceExpandHeight = false;
 
-        CreateLabel(infoObj.transform, item.title, 18, FontStyle.Bold, TextAnchor.UpperLeft);
-        CreateLabel(infoObj.transform, Safe(item.description), 14, FontStyle.Normal, TextAnchor.UpperLeft);
+        CreateLabel(infoObj.transform, item.title, 18, FontStyle.Bold, TextAnchor.UpperLeft, 28f);
+        CreateLabel(infoObj.transform, Safe(item.description), 14, FontStyle.Normal, TextAnchor.UpperLeft, 66f);
 
         string metadata = $"Episodes: {FormatEpisodes(item.episodes)}  |  Release: {Safe(item.releaseDate)} | Genres: {FormatGenres(item.genres)}";
-        CreateLabel(infoObj.transform, metadata, 13, FontStyle.Italic, TextAnchor.UpperLeft);
-
-        if (!_isIncognitoMode)
-        {
-            string statusLabel = userCatalogOnly ? "Status" : "Your status";
-            CreateLabel(infoObj.transform, $"{statusLabel}: {FormatWatchStatus(item.watchStatus)}", 13, FontStyle.Bold, TextAnchor.UpperLeft);
-            CreateLabel(infoObj.transform, $"Watched: {FormatWatchedEpisodes(item.episodesWatched, item.episodes)}  |  Score: {FormatScore(item.score)}", 13, FontStyle.Normal, TextAnchor.UpperLeft);
-        }
+        CreateLabel(infoObj.transform, metadata, 13, FontStyle.Italic, TextAnchor.UpperLeft, 24f);
     }
 
     private void CreateActionsArea(AnimeDeckItem item, Transform parent)
@@ -540,14 +535,18 @@ public class AnimeCatalogPanelController : MonoBehaviour
         layout.flexibleWidth = 0f;
 
         var vLayout = actionsObj.GetComponent<VerticalLayoutGroup>();
-        vLayout.spacing = 6f;
+        vLayout.spacing = 3f;
         vLayout.childControlWidth = true;
         vLayout.childControlHeight = true;
         vLayout.childForceExpandWidth = true;
         vLayout.childForceExpandHeight = false;
 
-        CreateLabel(actionsObj.transform, "Status", 13, FontStyle.Bold, TextAnchor.MiddleCenter);
+        CreateLabel(actionsObj.transform, "Status", 13, FontStyle.Bold, TextAnchor.MiddleCenter, 20f);
         CreateStatusDropdown(actionsObj.transform, item);
+        CreateLabel(actionsObj.transform, "Watched Episodes", 12, FontStyle.Bold, TextAnchor.MiddleCenter, 18f);
+        CreateEpisodeStepper(actionsObj.transform, item);
+        CreateLabel(actionsObj.transform, "Score", 12, FontStyle.Bold, TextAnchor.MiddleCenter, 18f);
+        CreateScoreDropdown(actionsObj.transform, item);
     }
 
     private void CreateStatusDropdown(Transform parent, AnimeDeckItem item)
@@ -556,8 +555,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
         dropdownObj.transform.SetParent(parent, false);
 
         var layout = dropdownObj.GetComponent<LayoutElement>();
-        layout.minHeight = 34f;
-        layout.preferredHeight = 34f;
+        layout.minHeight = 32f;
+        layout.preferredHeight = 32f;
 
         var image = dropdownObj.GetComponent<Image>();
         image.color = new Color(0.95f, 0.90f, 0.78f, 1f);
@@ -565,13 +564,9 @@ public class AnimeCatalogPanelController : MonoBehaviour
         var dropdown = dropdownObj.GetComponent<Dropdown>();
         dropdown.targetGraphic = image;
         dropdown.options = BuildStatusOptions();
-
-        var captionText = CreateDropdownText(dropdownObj.transform, "Label", new Vector2(10f, 0f), new Vector2(-30f, 0f), TextAnchor.MiddleLeft, Color.black);
-        dropdown.captionText = captionText;
-
-        var arrowText = CreateDropdownText(dropdownObj.transform, "Arrow", new Vector2(-28f, 0f), new Vector2(-6f, 0f), TextAnchor.MiddleCenter, Color.black);
+        dropdown.captionText = CreateDropdownText(dropdownObj.transform, "Label", new Vector2(10f, 0f), new Vector2(-42f, 0f), TextAnchor.MiddleLeft, Color.black);
+        var arrowText = CreateDropdownText(dropdownObj.transform, "Arrow", new Vector2(-30f, 0f), new Vector2(-2f, 0f), TextAnchor.MiddleCenter, Color.black);
         arrowText.text = "v";
-
         CreateDropdownTemplate(dropdown);
 
         dropdown.value = CurrentStatusIndex(item.watchStatus);
@@ -583,12 +578,124 @@ public class AnimeCatalogPanelController : MonoBehaviour
         });
     }
 
+    private void CreateEpisodeStepper(Transform parent, AnimeDeckItem item)
+    {
+        var rowObj = new GameObject("EpisodeStepper", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
+        rowObj.transform.SetParent(parent, false);
+
+        var layout = rowObj.GetComponent<LayoutElement>();
+        layout.minHeight = 28f;
+        layout.preferredHeight = 28f;
+
+        var row = rowObj.GetComponent<HorizontalLayoutGroup>();
+        row.spacing = 4f;
+        row.childControlWidth = true;
+        row.childControlHeight = true;
+        row.childForceExpandWidth = false;
+        row.childForceExpandHeight = true;
+
+        CreateSmallActionButton(rowObj.transform, "-", () => ChangeEpisodesWatched(item, -1));
+        CreateValueLabel(rowObj.transform, FormatWatchedEpisodes(item.episodesWatched, item.episodes), 72f);
+        CreateSmallActionButton(rowObj.transform, "+", () => ChangeEpisodesWatched(item, 1));
+    }
+
+    private void CreateScoreDropdown(Transform parent, AnimeDeckItem item)
+    {
+        var dropdownObj = new GameObject("ScoreDropdown", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Dropdown), typeof(LayoutElement));
+        dropdownObj.transform.SetParent(parent, false);
+
+        var layout = dropdownObj.GetComponent<LayoutElement>();
+        layout.minHeight = 32f;
+        layout.preferredHeight = 32f;
+
+        var image = dropdownObj.GetComponent<Image>();
+        image.color = new Color(0.95f, 0.90f, 0.78f, 1f);
+
+        var dropdown = dropdownObj.GetComponent<Dropdown>();
+        dropdown.targetGraphic = image;
+        dropdown.options = BuildScoreOptions();
+        dropdown.captionText = CreateDropdownText(dropdownObj.transform, "Label", new Vector2(10f, 0f), new Vector2(-42f, 0f), TextAnchor.MiddleLeft, Color.black);
+        var arrowText = CreateDropdownText(dropdownObj.transform, "Arrow", new Vector2(-30f, 0f), new Vector2(-2f, 0f), TextAnchor.MiddleCenter, Color.black);
+        arrowText.text = "v";
+        CreateDropdownTemplate(dropdown);
+
+        dropdown.value = Mathf.Clamp(item.score, 0, 10);
+        dropdown.RefreshShownValue();
+        dropdown.onValueChanged.AddListener((index) => UpdateAnimeProgress(item, index, item.episodesWatched));
+    }
+
+    private void CreateSmallActionButton(Transform parent, string label, Action onClick)
+    {
+        var buttonObj = new GameObject($"Btn_{label}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        buttonObj.transform.SetParent(parent, false);
+
+        var layout = buttonObj.GetComponent<LayoutElement>();
+        layout.minWidth = 28f;
+        layout.preferredWidth = 28f;
+        layout.minHeight = 26f;
+        layout.preferredHeight = 26f;
+        layout.flexibleWidth = 0f;
+
+        buttonObj.GetComponent<Image>().color = new Color(0.42f, 0.27f, 0.14f, 0.95f);
+        var button = buttonObj.GetComponent<Button>();
+        button.onClick.AddListener(() => onClick?.Invoke());
+
+        var textObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        textObj.transform.SetParent(buttonObj.transform, false);
+        var rect = textObj.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        var text = textObj.GetComponent<Text>();
+        text.text = label;
+        text.font = ResolveFont();
+        text.fontSize = 15;
+        text.fontStyle = FontStyle.Bold;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = Color.white;
+    }
+
+    private void CreateValueLabel(Transform parent, string value, float width)
+    {
+        var obj = new GameObject("Value", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text), typeof(LayoutElement));
+        obj.transform.SetParent(parent, false);
+
+        var layout = obj.GetComponent<LayoutElement>();
+        layout.minWidth = width;
+        layout.preferredWidth = width;
+        layout.minHeight = 26f;
+        layout.preferredHeight = 26f;
+        layout.flexibleWidth = 1f;
+
+        var text = obj.GetComponent<Text>();
+        text.text = value;
+        text.font = ResolveFont();
+        text.fontSize = 13;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+    }
+
     private List<Dropdown.OptionData> BuildStatusOptions()
     {
         var options = new List<Dropdown.OptionData>();
         foreach (var label in StatusLabels)
         {
             options.Add(new Dropdown.OptionData(label));
+        }
+
+        return options;
+    }
+
+    private List<Dropdown.OptionData> BuildScoreOptions()
+    {
+        var options = new List<Dropdown.OptionData> { new Dropdown.OptionData("-") };
+        for (int score = 1; score <= 10; score++)
+        {
+            options.Add(new Dropdown.OptionData(score.ToString()));
         }
 
         return options;
@@ -722,16 +829,49 @@ public class AnimeCatalogPanelController : MonoBehaviour
         }
     }
 
-    private Text CreateLabel(Transform parent, string value, int fontSize, FontStyle fontStyle, TextAnchor alignment)
+    private void ChangeEpisodesWatched(AnimeDeckItem item, int delta)
+    {
+        if (item == null) return;
+        int cap = item.episodes > 0 ? item.episodes : UnknownEpisodeCap;
+        int nextEpisodesWatched = Mathf.Clamp(item.episodesWatched + delta, 0, cap);
+        if (nextEpisodesWatched == item.episodesWatched) return;
+        UpdateAnimeProgress(item, item.score, nextEpisodesWatched);
+    }
+
+    private async void UpdateAnimeProgress(AnimeDeckItem item, int score, int episodesWatched)
+    {
+        if (_isIncognitoMode || item == null || ApiClient.Instance == null) return;
+
+        int cap = item.episodes > 0 ? item.episodes : UnknownEpisodeCap;
+        int nextEpisodesWatched = Mathf.Clamp(episodesWatched, 0, cap);
+        int nextScore = Mathf.Clamp(score, 0, 10);
+        string status = string.IsNullOrWhiteSpace(item.watchStatus) ? string.Empty : item.watchStatus.Trim().ToLowerInvariant();
+
+        try
+        {
+            _statusText.text = $"Updating {item.title} progress...";
+            await ApiClient.Instance.PatchAnimeProgress(item.id, status, nextScore, nextEpisodesWatched);
+            DozzleLogger.Action("Anime progress updated", $"animeId={item.id};episodesWatched={nextEpisodesWatched};score={nextScore}");
+            RefreshCatalog();
+        }
+        catch (Exception ex)
+        {
+            _statusText.text = "Failed to update anime progress.";
+            DozzleLogger.Error("Anime progress update failed", ex);
+        }
+    }
+
+    private Text CreateLabel(Transform parent, string value, int fontSize, FontStyle fontStyle, TextAnchor alignment, float minHeight = 0f)
     {
         var obj = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text), typeof(LayoutElement));
         obj.transform.SetParent(parent, false);
 
         var layout = obj.GetComponent<LayoutElement>();
-        layout.minHeight = fontSize + 6f;
+        layout.minHeight = minHeight > 0f ? minHeight : fontSize + 6f;
 
         var text = obj.GetComponent<Text>();
         text.text = value;
+        text.font = ResolveFont();
         text.fontSize = fontSize;
         text.fontStyle = fontStyle;
         text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
@@ -777,7 +917,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
     private System.Collections.IEnumerator TryLoadPoster(string url, RawImage target)
     {
         string requestUrl = BuildPosterRequestUrl(url);
-        using (var req = UnityEngine.Networking.UnityWebRequestTexture.GetTexture(requestUrl))
+        using (var req = UnityWebRequestTexture.GetTexture(requestUrl))
         {
             yield return req.SendWebRequest();
             if (target == null) yield break;
@@ -843,6 +983,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         rect.offsetMax = offsetMax;
 
         var text = obj.GetComponent<Text>();
+        text.font = ResolveFont();
         text.fontSize = size;
         text.fontStyle = style;
         text.color = new Color(0.17f, 0.10f, 0.04f, 1f);
@@ -961,25 +1102,6 @@ public class AnimeCatalogPanelController : MonoBehaviour
     {
         string watchedText = watched <= 0 ? "0" : watched.ToString();
         return total > 0 ? $"{watchedText}/{total}" : watchedText;
-    }
-
-    private static string FormatScore(int score)
-    {
-        return score <= 0 ? "-" : score.ToString();
-    }
-
-    private static string FormatWatchStatus(string status)
-    {
-        if (string.IsNullOrWhiteSpace(status)) return "Not in your list";
-        switch (status.Trim().ToLowerInvariant())
-        {
-            case "watching": return "Watching";
-            case "completed": return "Completed";
-            case "planned": return "Planned";
-            case "dropped": return "Dropped";
-            case "on_hold": return "On Hold";
-            default: return status;
-        }
     }
 
     private static string FormatGenres(string[] genres)

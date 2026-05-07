@@ -6,6 +6,7 @@ using UnityEngine.UI;
 public class QuestPanelController : MonoBehaviour
 {
     private static readonly Color QuestTextColor = new Color(0.17f, 0.10f, 0.04f, 1f);
+    private const string ClaimedQuestsPrefsPrefix = "animequest_claimed_quests_";
 
     public Font preferredFont;
 
@@ -39,12 +40,22 @@ public class QuestPanelController : MonoBehaviour
                 return;
             }
 
+            int visibleQuestCount = 0;
             foreach (var item in response.items)
             {
+                if (item == null || IsQuestClaimedToday(item.code)) continue;
                 CreateQuestCard(item, stats);
+                visibleQuestCount += 1;
             }
 
-            SetStatus($"Loaded {response.items.Length} weekly quests.");
+            if (visibleQuestCount == 0)
+            {
+                SetStatus("All available quests are claimed for today.");
+                ResetScrollToTop();
+                return;
+            }
+
+            SetStatus($"Loaded {visibleQuestCount} weekly quests.");
             ResetScrollToTop();
             DozzleLogger.Action("Quests loaded", json);
         }
@@ -74,6 +85,23 @@ public class QuestPanelController : MonoBehaviour
         catch (Exception ex)
         {
             DozzleLogger.Error("Failed to accept quest", ex);
+        }
+    }
+
+    public async void ClaimQuest(string questCode)
+    {
+        try
+        {
+            SetStatus("Claiming quest reward...");
+            string json = await ApiClient.Instance.ClaimQuest(questCode);
+            MarkQuestClaimedToday(questCode);
+            DozzleLogger.Action("Quest reward claimed", json);
+            RefreshQuests();
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Quest reward could not be claimed.");
+            DozzleLogger.Error("Failed to claim quest reward", ex);
         }
     }
 
@@ -113,13 +141,13 @@ public class QuestPanelController : MonoBehaviour
     {
         if (_descriptionText == null)
         {
-            _descriptionText = CreateTextElement("QuestDescription", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(48f, -138f), new Vector2(-48f, -90f), 18, FontStyle.Bold);
+            _descriptionText = CreateTextElement("QuestDescription", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(60f, -148f), new Vector2(-60f, -100f), 18, FontStyle.Bold);
             _descriptionText.text = "Weekly quests";
         }
 
         if (_statusText == null)
         {
-            _statusText = CreateTextElement("QuestStatus", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(48f, -180f), new Vector2(-48f, -140f), 15, FontStyle.Normal);
+            _statusText = CreateTextElement("QuestStatus", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(60f, -188f), new Vector2(-60f, -148f), 15, FontStyle.Normal);
         }
 
         if (_contentScrollRect == null || _content == null)
@@ -138,8 +166,8 @@ public class QuestPanelController : MonoBehaviour
         var viewportRect = viewportObj.GetComponent<RectTransform>();
         viewportRect.anchorMin = new Vector2(0f, 0f);
         viewportRect.anchorMax = new Vector2(1f, 1f);
-        viewportRect.offsetMin = new Vector2(48f, 56f);
-        viewportRect.offsetMax = new Vector2(-48f, -206f);
+        viewportRect.offsetMin = new Vector2(60f, 76f);
+        viewportRect.offsetMax = new Vector2(-60f, -216f);
 
         var viewportImage = viewportObj.GetComponent<Image>();
         viewportImage.color = new Color(0f, 0f, 0f, 0.01f);
@@ -170,7 +198,7 @@ public class QuestPanelController : MonoBehaviour
         layout.childForceExpandWidth = true;
         layout.childForceExpandHeight = false;
         layout.spacing = 12f;
-        layout.padding = new RectOffset(8, 8, 8, 8);
+        layout.padding = new RectOffset(8, 8, 8, 20);
 
         var fitter = contentObj.GetComponent<ContentSizeFitter>();
         fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
@@ -184,13 +212,16 @@ public class QuestPanelController : MonoBehaviour
     {
         if (item == null || _content == null) return;
 
+        float progress = CalculateProgress(item.requirements, stats);
+        bool canClaim = progress >= 1f;
+
         var cardObj = new GameObject($"QuestCard_{SafeName(item.code)}", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         cardObj.transform.SetParent(_content, false);
         cardObj.GetComponent<Image>().color = Color.clear;
 
         var layoutElement = cardObj.GetComponent<LayoutElement>();
-        layoutElement.minHeight = 164f;
-        layoutElement.preferredHeight = 184f;
+        layoutElement.minHeight = 172f;
+        layoutElement.preferredHeight = 196f;
 
         var layout = cardObj.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(14, 14, 10, 10);
@@ -203,8 +234,16 @@ public class QuestPanelController : MonoBehaviour
         CreateRowLabel(cardObj.transform, Safe(item.description), 14, FontStyle.Normal, 34f);
         CreateRowLabel(cardObj.transform, BuildRequirementsText(item.requirements, stats), 13, FontStyle.Normal, 22f);
         CreateRowLabel(cardObj.transform, BuildRewardsText(item.rewards), 13, FontStyle.Normal, 22f);
-        CreateProgressBar(cardObj.transform, CalculateProgress(item.requirements, stats));
-        CreateAcceptButton(cardObj.transform, item.code);
+        CreateProgressBar(cardObj.transform, progress);
+
+        if (canClaim)
+        {
+            CreateQuestButton(cardObj.transform, "Claim Reward", () => ClaimQuest(item.code), true);
+        }
+        else
+        {
+            CreateQuestButton(cardObj.transform, "Accept", () => AcceptQuest(item.code), true);
+        }
     }
 
     private void CreateProgressBar(Transform parent, float progress)
@@ -240,20 +279,24 @@ public class QuestPanelController : MonoBehaviour
         CreateRowLabel(rowObj.transform, $"{Mathf.RoundToInt(Mathf.Clamp01(progress) * 100f)}%", 14, FontStyle.Bold, 24f, width: 66f);
     }
 
-    private void CreateAcceptButton(Transform parent, string questCode)
+    private void CreateQuestButton(Transform parent, string label, Action onClick, bool interactable)
     {
-        var buttonObj = new GameObject("AcceptButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        var buttonObj = new GameObject("QuestButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
         buttonObj.transform.SetParent(parent, false);
         var layout = buttonObj.GetComponent<LayoutElement>();
         layout.minWidth = 130f;
-        layout.preferredWidth = 150f;
+        layout.preferredWidth = 160f;
         layout.minHeight = 32f;
         layout.preferredHeight = 32f;
-        buttonObj.GetComponent<Image>().color = new Color(0.86f, 0.76f, 0.50f, 1f);
+        buttonObj.GetComponent<Image>().color = interactable ? new Color(0.86f, 0.76f, 0.50f, 1f) : new Color(0.50f, 0.44f, 0.34f, 0.8f);
 
         var button = buttonObj.GetComponent<Button>();
-        button.onClick.AddListener(() => AcceptQuest(questCode));
-        CreateChildText(buttonObj.transform, "Text", "Accept", 14, FontStyle.Bold, TextAnchor.MiddleCenter, Color.black);
+        button.interactable = interactable;
+        if (interactable)
+        {
+            button.onClick.AddListener(() => onClick?.Invoke());
+        }
+        CreateChildText(buttonObj.transform, "Text", label, 14, FontStyle.Bold, TextAnchor.MiddleCenter, Color.black);
     }
 
     private Text CreateRowLabel(Transform parent, string value, int fontSize, FontStyle style, float minHeight, float width = 0f)
@@ -405,8 +448,14 @@ public class QuestPanelController : MonoBehaviour
         var parts = new List<string>();
         if (rewards.xp > 0) parts.Add($"XP {rewards.xp}");
         if (rewards.coins > 0) parts.Add($"Coins {rewards.coins}");
+        if (!string.IsNullOrWhiteSpace(rewards.character)) parts.Add($"Character {FormatCharacterKey(rewards.character)}");
         if (!string.IsNullOrWhiteSpace(rewards.item)) parts.Add(rewards.item);
         return parts.Count == 0 ? "Rewards: none" : $"Rewards: {string.Join(" | ", parts)}";
+    }
+
+    private static string FormatCharacterKey(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "-" : value.Replace("_", " ");
     }
 
     private static string Safe(string value)
@@ -429,6 +478,32 @@ public class QuestPanelController : MonoBehaviour
         if (_contentScrollRect == null) return;
         Canvas.ForceUpdateCanvases();
         _contentScrollRect.verticalNormalizedPosition = 1f;
+    }
+
+    private static bool IsQuestClaimedToday(string questCode)
+    {
+        if (string.IsNullOrWhiteSpace(questCode)) return false;
+        string claimed = PlayerPrefs.GetString(ClaimedQuestsPrefsKey(), string.Empty);
+        if (string.IsNullOrWhiteSpace(claimed)) return false;
+        string token = $"|{questCode.Trim()}|";
+        return $"|{claimed}|".IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static void MarkQuestClaimedToday(string questCode)
+    {
+        if (string.IsNullOrWhiteSpace(questCode)) return;
+        string key = ClaimedQuestsPrefsKey();
+        string claimed = PlayerPrefs.GetString(key, string.Empty);
+        string trimmedCode = questCode.Trim();
+        if ($"|{claimed}|".IndexOf($"|{trimmedCode}|", StringComparison.OrdinalIgnoreCase) >= 0) return;
+
+        PlayerPrefs.SetString(key, string.IsNullOrWhiteSpace(claimed) ? trimmedCode : $"{claimed}|{trimmedCode}");
+        PlayerPrefs.Save();
+    }
+
+    private static string ClaimedQuestsPrefsKey()
+    {
+        return ClaimedQuestsPrefsPrefix + DateTime.UtcNow.ToString("yyyyMMdd");
     }
 
     private class UserAnimeStats
@@ -484,5 +559,6 @@ public class QuestPanelController : MonoBehaviour
         public int xp;
         public int coins;
         public string item;
+        public string character;
     }
 }

@@ -10,6 +10,17 @@ datasource db {
 model User {
   userId                  String    @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
   displayName             String    @map("display_name")
+  experiencePoints        Int       @default(0) @map("experience_points")
+  level                   Int       @default(1)
+  coins                   Int       @default(0)
+  unlockedCharacters      String[]  @default(["robot_kyle"]) @map("unlocked_characters")
+  selectedCharacterKey    String    @default("robot_kyle") @map("selected_character_key")
+  robotColor              String    @default("default") @map("robot_color")
+  lastPositionX           Float?    @map("last_position_x")
+  lastPositionY           Float?    @map("last_position_y")
+  lastPositionZ           Float?    @map("last_position_z")
+  lastRotationY           Float?    @map("last_rotation_y")
+  lastPositionUpdatedAt   DateTime? @map("last_position_updated_at")
   malUserId               String?   @map("mal_user_id")
   malUsername             String?   @map("mal_username")
   malAccessToken          String?   @map("mal_access_token")

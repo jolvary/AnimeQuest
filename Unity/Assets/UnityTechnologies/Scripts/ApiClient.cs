@@ -235,6 +235,40 @@ public class ApiClient : MonoBehaviour
         return req.downloadHandler.text;
     }
 
+    public async Task<string> ClaimQuest(string code)
+    {
+        var req = CreateRequest($"{baseUrl}/api/quests/{UnityWebRequest.EscapeURL(code)}/claim", UnityWebRequest.kHttpVerbPOST, "{}");
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> GetCharacterProgression()
+    {
+        var req = CreateRequest($"{baseUrl}/api/characters", UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> SelectCharacter(string characterKey, string robotColor = null)
+    {
+        string body = JsonUtility.ToJson(new CharacterSelectBody { characterKey = characterKey, robotColor = robotColor });
+        var req = CreateRequest($"{baseUrl}/api/characters/select", UnityWebRequest.kHttpVerbPOST, body);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
     public async Task<string> GetTable(string tableName, int limit = 50, int offset = 0)
     {
         var req = CreateRequest($"{baseUrl}/api/table/{tableName}?limit={limit}&offset={offset}", UnityWebRequest.kHttpVerbGET);
@@ -262,6 +296,52 @@ public class ApiClient : MonoBehaviour
     {
         string body = JsonUtility.ToJson(new ListsPatchBody { add = add ?? Array.Empty<string>(), remove = remove ?? Array.Empty<string>() });
         var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/lists", "PATCH", body);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> PatchAnimeProgress(string animeId, string status, int score, int episodesWatched)
+    {
+        string body = JsonUtility.ToJson(new AnimeProgressPatchBody
+        {
+            status = status,
+            score = score,
+            episodesWatched = episodesWatched,
+        });
+        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/progress", "PATCH", body);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<PlayerStateResponse> GetPlayerState()
+    {
+        var req = CreateRequest($"{baseUrl}/api/player/state", UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return JsonUtility.FromJson<PlayerStateResponse>(req.downloadHandler.text);
+    }
+
+    public async Task<string> PatchPlayerState(Vector3 position, float rotationY)
+    {
+        string body = JsonUtility.ToJson(new PlayerStatePatchBody
+        {
+            x = position.x,
+            y = position.y,
+            z = position.z,
+            rotationY = rotationY,
+        });
+        var req = CreateRequest($"{baseUrl}/api/player/state", "PATCH", body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -317,6 +397,53 @@ public class ApiClient : MonoBehaviour
     }
 
     [Serializable]
+    public class CharacterProgressionResponse
+    {
+        public CharacterProfile profile;
+        public CharacterItem[] characters;
+    }
+
+    [Serializable]
+    public class CharacterProfile
+    {
+        public string userId;
+        public string displayName;
+        public int experiencePoints;
+        public int level;
+        public int nextLevelExperience;
+        public int coins;
+        public string selectedCharacterKey;
+        public string robotColor;
+    }
+
+    [Serializable]
+    public class CharacterItem
+    {
+        public string key;
+        public string displayName;
+        public string description;
+        public string kind;
+        public string robotColor;
+        public string prefabSlot;
+        public int unlockLevel;
+        public string unlockQuestCode;
+        public string assetStoreUrl;
+        public bool unlocked;
+        public bool selected;
+    }
+
+    [Serializable]
+    public class PlayerStateResponse
+    {
+        public bool hasPosition;
+        public float x;
+        public float y;
+        public float z;
+        public float rotationY;
+        public string updatedAt;
+    }
+
+    [Serializable]
     private class MalOAuthStartResponse
     {
         public string url;
@@ -343,6 +470,22 @@ public class ApiClient : MonoBehaviour
     }
 
     [Serializable]
+    private class CharacterSelectBody
+    {
+        public string characterKey;
+        public string robotColor;
+    }
+
+    [Serializable]
+    private class PlayerStatePatchBody
+    {
+        public float x;
+        public float y;
+        public float z;
+        public float rotationY;
+    }
+
+    [Serializable]
     private class WatchingPatchBody
     {
         public bool isWatching;
@@ -353,5 +496,13 @@ public class ApiClient : MonoBehaviour
     {
         public string[] add;
         public string[] remove;
+    }
+
+    [Serializable]
+    private class AnimeProgressPatchBody
+    {
+        public string status;
+        public int score;
+        public int episodesWatched;
     }
 }

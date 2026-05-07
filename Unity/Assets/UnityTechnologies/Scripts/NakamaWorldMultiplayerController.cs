@@ -10,23 +10,24 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
 {
     private const string WorldRoomName = "animequest-world";
     private const string StateMessageType = "world_state";
+    private const string DefaultCharacterKey = "robot_kyle";
+    private const string DefaultRobotColor = "default";
     private const float BroadcastInterval = 0.18f;
     private const float RemoteLerpSpeed = 12f;
     private const float RemoteAnimationLerpSpeed = 10f;
     private const float RemoteTimeoutSeconds = 30f;
     private const float SocketConnectRetrySeconds = 4f;
     private const float JoinRetrySeconds = 4f;
+    private const float CharacterRefreshIntervalSeconds = 10f;
     private const float MovingVelocityThreshold = 0.08f;
     private const float RunVelocityThreshold = 3.2f;
     private const float WalkAnimationSpeed = 2f;
     private const float RunAnimationSpeed = 6f;
     private const int SocketOperationTimeoutMilliseconds = 5000;
-
-    private static readonly int AnimIDSpeed = Animator.StringToHash("Speed");
-    private static readonly int AnimIDGrounded = Animator.StringToHash("Grounded");
-    private static readonly int AnimIDJump = Animator.StringToHash("Jump");
-    private static readonly int AnimIDFreeFall = Animator.StringToHash("FreeFall");
-    private static readonly int AnimIDMotionSpeed = Animator.StringToHash("MotionSpeed");
+    private const float PlayerStateSaveIntervalSeconds = 3f;
+    private const float PlayerStateLoadRetrySeconds = 2f;
+    private const float PlayerStatePositionEpsilon = 0.08f;
+    private const float PlayerStateRotationEpsilon = 2f;
 
     private readonly Dictionary<string, RemotePlayer> _remotePlayers = new Dictionary<string, RemotePlayer>();
     private readonly List<WorldStatePayload> _pendingStates = new List<WorldStatePayload>();
@@ -44,10 +45,23 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private float _nextBroadcastAt;
     private float _nextSocketConnectAttemptAt;
     private float _nextJoinAttemptAt;
+    private float _nextCharacterRefreshAt;
     private bool _isConnectingSocket;
     private bool _isJoining;
     private bool _isSending;
+    private bool _isLoadingCharacterProgression;
     private int _localPlayerMissingLogCount;
+    private string _selectedCharacterKey = DefaultCharacterKey;
+    private string _selectedRobotColor = DefaultRobotColor;
+    private string _playerStateUserId;
+    private bool _hasLoadedPlayerState;
+    private bool _isLoadingPlayerState;
+    private bool _isSavingPlayerState;
+    private bool _hasLastSavedPlayerState;
+    private Vector3 _lastSavedPlayerPosition;
+    private float _lastSavedPlayerRotationY;
+    private float _nextPlayerStateLoadAttemptAt;
+    private float _nextPlayerStateSaveAt;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Bootstrap()
@@ -63,6 +77,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     {
         FlushPendingStates();
         MaintainWorldConnection();
+        MaintainPlayerStatePersistence();
+        RefreshCharacterSelection();
         BroadcastLocalState();
         UpdateRemotePlayers();
     }
@@ -70,6 +86,12 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private void OnDestroy()
     {
         ResetWorldConnection(clearRemotes: true);
+    }
+
+    public void ForceCharacterProgressionRefresh()
+    {
+        _nextCharacterRefreshAt = 0f;
+        RefreshCharacterSelection();
     }
 
     private void MaintainWorldConnection()
@@ -176,6 +198,218 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         }
     }
 
+    private void MaintainPlayerStatePersistence()
+    {
+        var auth = NakamaAuthManager.Instance;
+        string userId = auth != null && auth.Session != null ? auth.Session.UserId : null;
+        if (auth == null || !auth.IsAuthenticated || auth.IsIncognitoSession || string.IsNullOrWhiteSpace(userId))
+        {
+            ResetPlayerStateTracking();
+            return;
+        }
+
+        if (!string.Equals(_playerStateUserId, userId, StringComparison.Ordinal))
+        {
+            _playerStateUserId = userId;
+            _hasLoadedPlayerState = false;
+            _isLoadingPlayerState = false;
+            _isSavingPlayerState = false;
+            _hasLastSavedPlayerState = false;
+            _nextPlayerStateLoadAttemptAt = 0f;
+            _nextPlayerStateSaveAt = Time.unscaledTime + PlayerStateSaveIntervalSeconds;
+        }
+
+        _localPlayer = ResolveLocalPlayer();
+        if (_localPlayer == null || ApiClient.Instance == null)
+        {
+            return;
+        }
+
+        if (!_hasLoadedPlayerState && !_isLoadingPlayerState && Time.unscaledTime >= _nextPlayerStateLoadAttemptAt)
+        {
+            LoadPlayerState(_localPlayer);
+            return;
+        }
+
+        if (_hasLoadedPlayerState && !_isSavingPlayerState && Time.unscaledTime >= _nextPlayerStateSaveAt)
+        {
+            SavePlayerStateIfChanged(_localPlayer);
+        }
+    }
+
+    private async void LoadPlayerState(Transform localPlayer)
+    {
+        _isLoadingPlayerState = true;
+        _nextPlayerStateLoadAttemptAt = Time.unscaledTime + PlayerStateLoadRetrySeconds;
+
+        try
+        {
+            var state = await ApiClient.Instance.GetPlayerState();
+            if (localPlayer == null)
+            {
+                return;
+            }
+
+            if (state != null && state.hasPosition)
+            {
+                var position = new Vector3(state.x, state.y, state.z);
+                ApplyPlayerState(localPlayer, position, state.rotationY);
+                _lastSavedPlayerPosition = position;
+                _lastSavedPlayerRotationY = state.rotationY;
+                _hasLastSavedPlayerState = true;
+                DozzleLogger.Action("Player position restored", $"user={ShortKey(_playerStateUserId)};x={position.x:0.##};z={position.z:0.##}");
+            }
+            else
+            {
+                CaptureLastSavedPlayerState(localPlayer);
+            }
+
+            _hasLoadedPlayerState = true;
+        }
+        catch (Exception ex)
+        {
+            DozzleLogger.Error("Player position restore failed", ex);
+        }
+        finally
+        {
+            _isLoadingPlayerState = false;
+        }
+    }
+
+    private void ApplyPlayerState(Transform localPlayer, Vector3 position, float rotationY)
+    {
+        if (localPlayer == null) return;
+
+        var characterController = localPlayer.GetComponent<CharacterController>();
+        bool wasEnabled = characterController != null && characterController.enabled;
+        if (wasEnabled)
+        {
+            characterController.enabled = false;
+        }
+
+        localPlayer.position = position;
+        localPlayer.rotation = Quaternion.Euler(0f, rotationY, 0f);
+
+        if (wasEnabled)
+        {
+            characterController.enabled = true;
+        }
+
+        _lastLocalPosition = position;
+        _lastLocalPositionAt = Time.unscaledTime;
+        _hasLastLocalPosition = true;
+    }
+
+    private void SavePlayerStateIfChanged(Transform localPlayer)
+    {
+        _nextPlayerStateSaveAt = Time.unscaledTime + PlayerStateSaveIntervalSeconds;
+        if (localPlayer == null || ApiClient.Instance == null)
+        {
+            return;
+        }
+
+        Vector3 position = localPlayer.position;
+        float rotationY = localPlayer.eulerAngles.y;
+        if (_hasLastSavedPlayerState &&
+            !PositionChangedEnough(_lastSavedPlayerPosition, position) &&
+            RotationDelta(_lastSavedPlayerRotationY, rotationY) < PlayerStateRotationEpsilon)
+        {
+            return;
+        }
+
+        SavePlayerState(position, rotationY);
+    }
+
+    private async void SavePlayerState(Vector3 position, float rotationY)
+    {
+        if (_isSavingPlayerState || ApiClient.Instance == null)
+        {
+            return;
+        }
+
+        _isSavingPlayerState = true;
+        try
+        {
+            await ApiClient.Instance.PatchPlayerState(position, rotationY);
+            _lastSavedPlayerPosition = position;
+            _lastSavedPlayerRotationY = rotationY;
+            _hasLastSavedPlayerState = true;
+        }
+        catch (Exception ex)
+        {
+            DozzleLogger.Error("Player position save failed", ex);
+        }
+        finally
+        {
+            _isSavingPlayerState = false;
+        }
+    }
+
+    private void CaptureLastSavedPlayerState(Transform localPlayer)
+    {
+        if (localPlayer == null) return;
+
+        _lastSavedPlayerPosition = localPlayer.position;
+        _lastSavedPlayerRotationY = localPlayer.eulerAngles.y;
+        _hasLastSavedPlayerState = true;
+    }
+
+    private static bool PositionChangedEnough(Vector3 previous, Vector3 current)
+    {
+        return Vector3.Distance(previous, current) >= PlayerStatePositionEpsilon;
+    }
+
+    private static float RotationDelta(float previous, float current)
+    {
+        return Mathf.Abs(Mathf.DeltaAngle(previous, current));
+    }
+
+    private void ResetPlayerStateTracking()
+    {
+        _playerStateUserId = null;
+        _hasLoadedPlayerState = false;
+        _isLoadingPlayerState = false;
+        _isSavingPlayerState = false;
+        _hasLastSavedPlayerState = false;
+        _nextPlayerStateLoadAttemptAt = 0f;
+        _nextPlayerStateSaveAt = 0f;
+    }
+
+    private async void RefreshCharacterSelection()
+    {
+        if (_isLoadingCharacterProgression || Time.unscaledTime < _nextCharacterRefreshAt) return;
+
+        var auth = NakamaAuthManager.Instance;
+        if (auth == null || !auth.IsAuthenticated || auth.IsIncognitoSession || ApiClient.Instance == null)
+        {
+            _selectedCharacterKey = DefaultCharacterKey;
+            _selectedRobotColor = DefaultRobotColor;
+            return;
+        }
+
+        _isLoadingCharacterProgression = true;
+        _nextCharacterRefreshAt = Time.unscaledTime + CharacterRefreshIntervalSeconds;
+        try
+        {
+            string json = await ApiClient.Instance.GetCharacterProgression();
+            var progression = JsonUtility.FromJson<ApiClient.CharacterProgressionResponse>(json);
+            if (progression?.profile != null)
+            {
+                _selectedCharacterKey = NormalizeText(progression.profile.selectedCharacterKey, DefaultCharacterKey);
+                _selectedRobotColor = NormalizeText(progression.profile.robotColor, DefaultRobotColor);
+                ApplyLocalRobotColor(_selectedRobotColor);
+            }
+        }
+        catch (Exception ex)
+        {
+            DozzleLogger.Error("Character progression refresh failed", ex);
+        }
+        finally
+        {
+            _isLoadingCharacterProgression = false;
+        }
+    }
+
     private void BroadcastLocalState()
     {
         if (_worldChannel == null || _isSending || Time.unscaledTime < _nextBroadcastAt) return;
@@ -211,6 +445,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
                 clientId = ResolveClientInstanceId(),
                 userId = auth.Session.UserId,
                 username = ResolveUsername(auth),
+                characterKey = _selectedCharacterKey,
+                robotColor = _selectedRobotColor,
                 px = position.x,
                 py = position.y,
                 pz = position.z,
@@ -362,11 +598,25 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         remote.targetPosition = new Vector3(state.px, state.py, state.pz);
         remote.targetRotation = Quaternion.Euler(0f, state.ry, 0f);
         remote.lastSeenAt = Time.unscaledTime;
+        ApplyRemoteAppearanceState(remote, state);
         ApplyRemoteAnimationState(remote, state);
         if (remote.nameLabel != null)
         {
             remote.nameLabel.text = string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username;
         }
+    }
+
+    private void ApplyRemoteAppearanceState(RemotePlayer remote, WorldStatePayload state)
+    {
+        if (remote == null || state == null) return;
+
+        string nextCharacterKey = NormalizeText(state.characterKey, DefaultCharacterKey);
+        string nextRobotColor = NormalizeText(state.robotColor, DefaultRobotColor);
+        if (remote.characterKey == nextCharacterKey && remote.robotColor == nextRobotColor) return;
+
+        remote.characterKey = nextCharacterKey;
+        remote.robotColor = nextRobotColor;
+        ApplyRobotColor(remote.visual, nextRobotColor);
     }
 
     private void ApplyRemoteAnimationState(RemotePlayer remote, WorldStatePayload state)
@@ -412,18 +662,24 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
             visual = CreateFallbackCapsule(root.transform, remoteKey);
         }
 
+        string robotColor = NormalizeText(state.robotColor, DefaultRobotColor);
+        ApplyRobotColor(visual, robotColor);
+
         var animator = root.GetComponentInChildren<Animator>(true);
         ConfigureRemoteAnimator(animator);
 
         var label = CreateNamePlate(root.transform, string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username);
-        DozzleLogger.Action("World multiplayer remote spawned", $"remote={ShortKey(remoteKey)};user={ShortKey(state.userId)};name={label.text};visual={(usedRobotVisual ? "robot" : "capsule")};animator={(animator != null ? "yes" : "no")}");
+        DozzleLogger.Action("World multiplayer remote spawned", $"remote={ShortKey(remoteKey)};user={ShortKey(state.userId)};name={label.text};visual={(usedRobotVisual ? "robot" : "capsule")};character={NormalizeText(state.characterKey, DefaultCharacterKey)};color={robotColor};animator={(animator != null ? "yes" : "no")}");
         return new RemotePlayer
         {
             root = root,
             transform = root.transform,
+            visual = visual,
             namePlate = label.transform,
             nameLabel = label,
             animator = animator,
+            characterKey = NormalizeText(state.characterKey, DefaultCharacterKey),
+            robotColor = robotColor,
             grounded = true,
             targetPosition = root.transform.position,
             targetRotation = root.transform.rotation,
@@ -511,6 +767,73 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         return null;
     }
 
+    private void ApplyLocalRobotColor(string colorKey)
+    {
+        _localPlayer = ResolveLocalPlayer();
+        if (_localPlayer == null) return;
+
+        Transform robot = FindChildByName(_localPlayer, "RobotKyle") ?? FindRenderableVisualRoot(_localPlayer);
+        if (robot != null)
+        {
+            ApplyRobotColor(robot.gameObject, colorKey);
+        }
+    }
+
+    private static void ApplyRobotColor(GameObject visual, string colorKey)
+    {
+        if (visual == null) return;
+
+        Color color = ColorForRobotColor(colorKey);
+        var renderers = visual.GetComponentsInChildren<Renderer>(true);
+        bool appliedNamedMaterial = false;
+
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null) continue;
+            var materials = renderer.materials;
+            for (int i = 0; i < materials.Length; i++)
+            {
+                var material = materials[i];
+                if (material == null || !material.HasProperty("_Color")) continue;
+
+                string materialName = material.name ?? string.Empty;
+                bool looksLikeRobotMaterial = materialName.IndexOf("Kyle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                              materialName.IndexOf("Robot", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                              renderer.name.IndexOf("Robot", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!looksLikeRobotMaterial) continue;
+
+                material.color = color;
+                appliedNamedMaterial = true;
+            }
+        }
+
+        if (appliedNamedMaterial) return;
+
+        foreach (var renderer in renderers)
+        {
+            if (renderer == null || renderer.GetComponentInParent<Canvas>() != null) continue;
+            foreach (var material in renderer.materials)
+            {
+                if (material != null && material.HasProperty("_Color"))
+                {
+                    material.color = color;
+                }
+            }
+        }
+    }
+
+    private static Color ColorForRobotColor(string colorKey)
+    {
+        switch (NormalizeText(colorKey, DefaultRobotColor).ToLowerInvariant())
+        {
+            case "blue": return new Color(0.22f, 0.48f, 0.95f, 1f);
+            case "green": return new Color(0.22f, 0.76f, 0.36f, 1f);
+            case "red": return new Color(0.88f, 0.20f, 0.16f, 1f);
+            case "gold": return new Color(0.95f, 0.74f, 0.28f, 1f);
+            default: return Color.white;
+        }
+    }
+
     private static void StripRemoteVisualComponents(GameObject visual)
     {
         if (visual == null) return;
@@ -533,16 +856,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
 
     private static void ConfigureRemoteAnimator(Animator animator)
     {
-        if (animator == null) return;
-
-        animator.enabled = true;
-        animator.applyRootMotion = false;
-        animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
-        animator.SetBool(AnimIDGrounded, true);
-        animator.SetBool(AnimIDJump, false);
-        animator.SetBool(AnimIDFreeFall, false);
-        animator.SetFloat(AnimIDSpeed, 0f);
-        animator.SetFloat(AnimIDMotionSpeed, 0f);
+        NativeCharacterAnimationAdapter.Configure(animator, DefaultCharacterKey);
     }
 
     private static GameObject CreateFallbackCapsule(Transform parent, string remoteKey)
@@ -651,11 +965,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
             remote.animationSpeed = 0f;
         }
 
-        remote.animator.SetFloat(AnimIDSpeed, remote.animationSpeed);
-        remote.animator.SetFloat(AnimIDMotionSpeed, remote.targetMotionSpeed);
-        remote.animator.SetBool(AnimIDGrounded, remote.grounded);
-        remote.animator.SetBool(AnimIDJump, false);
-        remote.animator.SetBool(AnimIDFreeFall, !remote.grounded);
+        NativeCharacterAnimationAdapter.Apply(remote.animator, remote.characterKey, remote.animationSpeed, remote.targetMotionSpeed, remote.grounded);
     }
 
     private Transform ResolveLocalPlayer()
@@ -702,6 +1012,11 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(value)) return "unknown";
         return value.Length <= 8 ? value : value.Substring(0, 8);
+    }
+
+    private static string NormalizeText(string value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     private static Color ColorForRemote(string value)
@@ -752,10 +1067,13 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private class RemotePlayer
     {
         public GameObject root;
+        public GameObject visual;
         public Transform transform;
         public Transform namePlate;
         public Text nameLabel;
         public Animator animator;
+        public string characterKey;
+        public string robotColor;
         public Vector3 targetPosition;
         public Quaternion targetRotation;
         public float animationSpeed;
@@ -780,6 +1098,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         public string clientId;
         public string userId;
         public string username;
+        public string characterKey;
+        public string robotColor;
         public float px;
         public float py;
         public float pz;
