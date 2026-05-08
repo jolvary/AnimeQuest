@@ -20,11 +20,8 @@ MonoBehaviour:
     rid: 1213855450492043494
   m_OverrideGlobalSceneList: 1
   m_Scenes:
-  - m_enabled: 0
-    m_path: Assets/Scenes/AnimeQuestGame.unity
   - m_enabled: 1
-    m_path: Assets/SimplePoly City - Low Poly Assets/Demo/SimplePoly City - Low Poly
-      Assets_Demo Scene.unity
+    m_path: Assets/Scenes/CityScene.unity
   m_HasScriptingDefines: 0
   m_ScriptingDefines: []
   m_PlayerSettingsYaml:
@@ -84,7 +81,7 @@ MonoBehaviour:
     - line: '|   mipStripping: 0'
     - line: '|   numberOfMipsStripped: 0'
     - line: '|   numberOfMipsStrippedPerMipmapLimitGroup: {}'
-    - line: '|   m_StackTraceTypes: 010000000100000001000000010000000100000001000000'
+    - line: '|   m_StackTraceTypes: 020000000200000002000000020000000200000001000000'
     - line: '|   iosShowActivityIndicatorOnLoading: -1'
     - line: '|   androidShowActivityIndicatorOnLoading: -1'
     - line: '|   iosUseCustomAppBackgroundBehavior: 0'

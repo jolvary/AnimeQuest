@@ -9,6 +9,10 @@ using UnityEngine.UI;
 
 public class CharacterPanelController : MonoBehaviour
 {
+    private const string DefaultCharacterKey = "robot_kyle";
+    private const string DefaultRobotColor = "default";
+    private const int MaxLogValueLength = 700;
+
     private static readonly Color TextColor = new Color(0.17f, 0.10f, 0.04f, 1f);
     private static readonly Color ButtonColor = new Color(0.48f, 0.28f, 0.12f, 0.86f);
     private static readonly Color DisabledButtonColor = new Color(0.36f, 0.30f, 0.23f, 0.72f);
@@ -45,12 +49,15 @@ public class CharacterPanelController : MonoBehaviour
         DisableLegacyTableDumpElements();
         ClearCards();
         SetStatus("Loading characters...");
+        DozzleLogger.Action("Character panel refresh requested",
+            $"api={(ApiClient.Instance != null ? "yes" : "no")};authManager={(NakamaAuthManager.Instance != null ? "yes" : "no")};authenticated={(NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated)};incognito={(NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsIncognitoSession)}");
 
         if (ApiClient.Instance == null || NakamaAuthManager.Instance == null || !NakamaAuthManager.Instance.IsAuthenticated || NakamaAuthManager.Instance.IsIncognitoSession)
         {
             SetStatus("Log in to unlock and select characters.");
             CreateInfoCard("Robot Kyle", "Available by default. Log in to unlock more characters through quests and XP.");
             ResetScrollToTop();
+            DozzleLogger.Action("Character panel refresh blocked", "reason=not-authenticated-or-incognito");
             return;
         }
 
@@ -66,13 +73,22 @@ public class CharacterPanelController : MonoBehaviour
             }
 
             SetStatus($"Level {progression.profile.level} | XP {progression.profile.experiencePoints}/{progression.profile.nextLevelExperience} | Coins {progression.profile.coins}");
+            int unlockedCount = 0;
+            var characterKeys = new List<string>();
             foreach (var character in progression.characters)
             {
+                if (character == null) continue;
+                if (character.unlocked) unlockedCount++;
+                characterKeys.Add($"{Safe(character.key)}:{(character.unlocked ? "unlocked" : "locked")}:{(character.selected ? "selected" : "available")}");
                 CreateCharacterCard(character);
             }
 
             ResetScrollToTop();
-            DozzleLogger.Action("Character panel loaded", $"count={progression.characters.Length};selected={progression.profile.selectedCharacterKey}");
+            DozzleLogger.Action("Character panel loaded",
+                $"count={progression.characters.Length};unlocked={unlockedCount};selected={Safe(progression.profile.selectedCharacterKey)};robotColor={Safe(progression.profile.robotColor)};keys={TrimForLog(string.Join(",", characterKeys))}");
+            LogCharacterReferenceSnapshot("panel-load");
+            LogCharacterPrefabCheck(progression.profile.selectedCharacterKey, progression.profile.robotColor, "panel-load-selected");
+            LogWorldAndSkinState("panel-load");
         }
         catch (Exception ex)
         {
@@ -211,9 +227,35 @@ public class CharacterPanelController : MonoBehaviour
         try
         {
             SetStatus($"Selecting {character.displayName}...");
+            DozzleLogger.Action("Character select requested",
+                $"key={Safe(character.key)};displayName={Safe(character.displayName)};robotColor={Safe(character.robotColor)};unlocked={character.unlocked};currentlySelected={character.selected}");
+            LogCharacterReferenceSnapshot("before-select");
+            LogCharacterPrefabCheck(character.key, character.robotColor, "before-select");
+            LogWorldAndSkinState("before-select");
+
             string json = await ApiClient.Instance.SelectCharacter(character.key, character.robotColor);
-            DozzleLogger.Action("Character selected", json);
-            ForceWorldCharacterRefresh();
+            DozzleLogger.Action("Character selected", TrimForLog(json));
+
+            string selectedCharacterKey = character.key;
+            string selectedRobotColor = character.robotColor;
+            try
+            {
+                var progression = JsonUtility.FromJson<ApiClient.CharacterProgressionResponse>(json);
+                if (progression?.profile != null)
+                {
+                    selectedCharacterKey = string.IsNullOrWhiteSpace(progression.profile.selectedCharacterKey) ? selectedCharacterKey : progression.profile.selectedCharacterKey;
+                    selectedRobotColor = string.IsNullOrWhiteSpace(progression.profile.robotColor) ? selectedRobotColor : progression.profile.robotColor;
+                }
+            }
+            catch
+            {
+                // Keep logging focused on the original selection if the API response shape changes.
+            }
+
+            DozzleLogger.Action("Character select response parsed",
+                $"requestedKey={Safe(character.key)};selectedKey={Safe(selectedCharacterKey)};robotColor={Safe(selectedRobotColor)};responseBytes={(json != null ? json.Length : 0)}");
+            LogCharacterPrefabCheck(selectedCharacterKey, selectedRobotColor, "after-select-response");
+            ForceWorldCharacterRefresh("after-select-response");
             StartCoroutine(ForceWorldCharacterRefreshAfterSelection());
             RefreshCharacters();
         }
@@ -224,27 +266,170 @@ public class CharacterPanelController : MonoBehaviour
         }
     }
 
-    private static void ForceWorldCharacterRefresh()
+    private static void ForceWorldCharacterRefresh(string reason = "manual")
     {
         var world = FindFirstObjectByType<NakamaWorldMultiplayerController>(FindObjectsInactive.Include);
+        var skin = FindFirstObjectByType<WorldCharacterSkinApplier>(FindObjectsInactive.Include);
+        DozzleLogger.Action("Character select refresh hook", $"reason={reason};world={(world != null ? "yes" : "no")};skin={(skin != null ? "yes" : "no")}");
+        LogWorldAndSkinState($"{reason}-before-refresh");
+
         if (world != null)
         {
             world.ForceCharacterProgressionRefresh();
         }
 
-        var skin = FindFirstObjectByType<WorldCharacterSkinApplier>(FindObjectsInactive.Include);
         if (skin != null)
         {
             skin.ForceApplyNow();
         }
+
+        LogWorldAndSkinState($"{reason}-after-refresh");
     }
 
     private IEnumerator ForceWorldCharacterRefreshAfterSelection()
     {
         yield return new WaitForSecondsRealtime(0.5f);
-        ForceWorldCharacterRefresh();
+        ForceWorldCharacterRefresh("delayed-0.5s");
         yield return new WaitForSecondsRealtime(1.25f);
-        ForceWorldCharacterRefresh();
+        ForceWorldCharacterRefresh("delayed-1.75s");
+    }
+
+    private static void LogCharacterReferenceSnapshot(string reason)
+    {
+        var references = Resources.Load<CharacterPrefabReferences>("CharacterPrefabReferences");
+        if (references == null)
+        {
+            DozzleLogger.Action("Character panel references", $"reason={reason};loaded=no");
+            return;
+        }
+
+        DozzleLogger.Action("Character panel references",
+            $"reason={reason};loaded=yes;ghost={PrefabName(references.ghostCharacterPrefab)};skeleton={PrefabName(references.skeletonPrefab)};tinyMale={PrefabName(references.tinyHeroMalePbrPrefab)};tinyFemale={PrefabName(references.tinyHeroFemalePbrPrefab)};sciFiHp={PrefabName(references.sciFiHpCharacterPrefab)};sciFiPbr={PrefabName(references.sciFiPbrCharacterPrefab)};sciFiPolyart={PrefabName(references.sciFiPolyartCharacterPrefab)};sampleHero={PrefabName(references.sampleHeroPrefab)}");
+    }
+
+    private static void LogCharacterPrefabCheck(string selectedCharacterKey, string selectedRobotColor, string reason)
+    {
+        string characterKey = string.IsNullOrWhiteSpace(selectedCharacterKey) ? DefaultCharacterKey : selectedCharacterKey.Trim();
+        if (IsRobotCharacter(characterKey))
+        {
+            DozzleLogger.Action("Character panel prefab check", $"reason={reason};character={characterKey};robotColor={Safe(selectedRobotColor)};robot=yes");
+            return;
+        }
+
+        var references = Resources.Load<CharacterPrefabReferences>("CharacterPrefabReferences");
+        GameObject referencedPrefab = ResolveReferencedPrefab(references, characterKey);
+        GameObject resolvedPrefab = CharacterPrefabCatalog.ResolvePrefab(characterKey);
+        DozzleLogger.Action("Character panel prefab check",
+            $"reason={reason};character={characterKey};robotColor={Safe(selectedRobotColor)};referencesLoaded={(references != null ? "yes" : "no")};referencedPrefab={PrefabName(referencedPrefab)};resolvedPrefab={PrefabName(resolvedPrefab)};resolvedRenderers={CountRenderers(resolvedPrefab)}");
+    }
+
+    private static void LogWorldAndSkinState(string reason)
+    {
+        var world = FindFirstObjectByType<NakamaWorldMultiplayerController>(FindObjectsInactive.Include);
+        if (world == null)
+        {
+            DozzleLogger.Action("Character panel world state", $"reason={reason};world=missing");
+        }
+        else
+        {
+            DozzleLogger.Action("Character panel world state",
+                $"reason={reason};character={ReadStringPrivateField(world, "_selectedCharacterKey", DefaultCharacterKey)};robotColor={ReadStringPrivateField(world, "_selectedRobotColor", DefaultRobotColor)};channel={ReadStringPrivateField(world, "_worldChannelId", "none")};loading={ReadBoolPrivateField(world, "_isLoadingCharacterProgression")};sending={ReadBoolPrivateField(world, "_isSending")};remotes={ReadDictionaryCount(world, "_remotePlayers")}");
+        }
+
+        var skin = FindFirstObjectByType<WorldCharacterSkinApplier>(FindObjectsInactive.Include);
+        if (skin == null)
+        {
+            DozzleLogger.Action("Character panel skin state", $"reason={reason};skin=missing");
+            return;
+        }
+
+        var localPlayer = ReadObjectPrivateField(skin, "_localPlayer") as Transform;
+        var robotVisual = ReadObjectPrivateField(skin, "_localRobotVisual") as Transform;
+        var overrideVisual = ReadObjectPrivateField(skin, "_localOverrideVisual") as GameObject;
+        DozzleLogger.Action("Character panel skin state",
+            $"reason={reason};applied={ReadStringPrivateField(skin, "_localAppliedKey", "none")};player={ObjectName(localPlayer)};robotVisual={ObjectName(robotVisual)};override={PrefabName(overrideVisual)};overrideRenderers={CountRenderers(overrideVisual)};robotEnabledRenderers={CountEnabledRenderers(robotVisual != null ? robotVisual.gameObject : null)}");
+    }
+
+    private static GameObject ResolveReferencedPrefab(CharacterPrefabReferences references, string key)
+    {
+        if (references == null) return null;
+
+        switch (key)
+        {
+            case "ghost_character": return references.ghostCharacterPrefab;
+            case "skeleton": return references.skeletonPrefab;
+            case "tiny_hero":
+            case "tiny_hero_male": return references.tinyHeroMalePbrPrefab != null ? references.tinyHeroMalePbrPrefab : references.tinyHeroPrefab;
+            case "tiny_hero_female": return references.tinyHeroFemalePbrPrefab != null ? references.tinyHeroFemalePbrPrefab : references.sampleHeroPrefab;
+            case "robot_hero": return references.robotHeroPrefab;
+            case "scifi_hp_character": return references.sciFiHpCharacterPrefab;
+            case "scifi_pbr_character": return references.sciFiPbrCharacterPrefab;
+            case "scifi_polyart_character": return references.sciFiPolyartCharacterPrefab;
+            case "sample_hero": return references.sampleHeroPrefab;
+            default: return null;
+        }
+    }
+
+    private static object ReadObjectPrivateField(object target, string fieldName)
+    {
+        if (target == null || string.IsNullOrWhiteSpace(fieldName)) return null;
+
+        FieldInfo field = target.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return field?.GetValue(target);
+    }
+
+    private static string ReadStringPrivateField(object target, string fieldName, string fallback)
+    {
+        object value = ReadObjectPrivateField(target, fieldName);
+        string text = value as string;
+        return string.IsNullOrWhiteSpace(text) ? fallback : text.Trim();
+    }
+
+    private static bool ReadBoolPrivateField(object target, string fieldName)
+    {
+        object value = ReadObjectPrivateField(target, fieldName);
+        return value is bool boolValue && boolValue;
+    }
+
+    private static int ReadDictionaryCount(object target, string fieldName)
+    {
+        object value = ReadObjectPrivateField(target, fieldName);
+        if (value is IDictionary dictionary) return dictionary.Count;
+        return -1;
+    }
+
+    private static string PrefabName(GameObject prefab)
+    {
+        return prefab != null ? prefab.name : "null";
+    }
+
+    private static string ObjectName(UnityEngine.Object obj)
+    {
+        return obj != null ? obj.name : "null";
+    }
+
+    private static int CountRenderers(GameObject root)
+    {
+        if (root == null) return 0;
+        return root.GetComponentsInChildren<Renderer>(true).Length;
+    }
+
+    private static int CountEnabledRenderers(GameObject root)
+    {
+        if (root == null) return 0;
+
+        int count = 0;
+        foreach (var renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null && renderer.enabled) count++;
+        }
+        return count;
+    }
+
+    private static bool IsRobotCharacter(string characterKey)
+    {
+        string normalized = string.IsNullOrWhiteSpace(characterKey) ? DefaultCharacterKey : characterKey.Trim().ToLowerInvariant();
+        return normalized == "robot_kyle" || normalized == "robot_blue" || normalized == "robot_green" || normalized == "robot_red";
     }
 
     private void CreateButton(Transform parent, string label, Action onClick, bool interactable)
@@ -416,6 +601,13 @@ public class CharacterPanelController : MonoBehaviour
     private static string Safe(string value)
     {
         return string.IsNullOrWhiteSpace(value) ? "-" : value.Replace("\n", " ").Trim();
+    }
+
+    private static string TrimForLog(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "-";
+        string normalized = value.Replace("\n", " ").Replace("\r", " ").Trim();
+        return normalized.Length <= MaxLogValueLength ? normalized : normalized.Substring(0, MaxLogValueLength) + "...";
     }
 
     private static string SafeName(string value)

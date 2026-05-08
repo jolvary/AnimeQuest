@@ -2,11 +2,13 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using Unity.Cinemachine;
 using System;
 
 public class GameBootstrap : MonoBehaviour
 {
     private const float SessionLeaseHeartbeatIntervalSeconds = 25f;
+    private const float CameraCollisionRetryIntervalSeconds = 1f;
 
     [SerializeField] private MainMenuAuthController mainMenuAuthController;
     [SerializeField] private UIManager uiManager;
@@ -14,10 +16,19 @@ public class GameBootstrap : MonoBehaviour
     private bool _sessionLeaseActive;
     private bool _sessionLeaseHeartbeatInFlight;
     private float _nextSessionLeaseHeartbeatAt;
+    private bool _cameraCollisionConfigured;
+    private float _nextCameraCollisionRetryAt;
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    private static void ConfigureCameraCollisionOnSceneLoad()
+    {
+        ConfigureThirdPersonCameraCollision();
+    }
 
     private void Start()
     {
         DozzleLogger.Action("Game bootstrap start");
+        ConfigureCameraCollisionIfNeeded(true);
         ResolveMainMenuController();
 
         if (uiManager == null)
@@ -45,6 +56,7 @@ public class GameBootstrap : MonoBehaviour
     private void Update()
     {
         ApplyPanelSafeAreaLayout();
+        ConfigureCameraCollisionIfNeeded(false);
         MaintainSessionLease();
 
         if (Keyboard.current == null) return;
@@ -68,6 +80,50 @@ public class GameBootstrap : MonoBehaviour
         {
             ToggleMainMenu();
         }
+    }
+
+    private void ConfigureCameraCollisionIfNeeded(bool force)
+    {
+        if (_cameraCollisionConfigured && !force) return;
+        if (!force && Time.unscaledTime < _nextCameraCollisionRetryAt) return;
+
+        _nextCameraCollisionRetryAt = Time.unscaledTime + CameraCollisionRetryIntervalSeconds;
+        int configuredCount = ConfigureThirdPersonCameraCollision();
+        if (configuredCount <= 0) return;
+
+        _cameraCollisionConfigured = true;
+        DozzleLogger.Action("Camera collision configured", $"thirdPersonFollows={configuredCount}");
+    }
+
+    private static int ConfigureThirdPersonCameraCollision()
+    {
+        CinemachineThirdPersonFollow[] thirdPersonFollows = FindObjectsByType<CinemachineThirdPersonFollow>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        if (thirdPersonFollows == null || thirdPersonFollows.Length == 0) return 0;
+
+        int defaultLayer = LayerMask.NameToLayer("Default");
+        LayerMask collisionMask = new LayerMask
+        {
+            value = defaultLayer >= 0 ? 1 << defaultLayer : Physics.DefaultRaycastLayers
+        };
+
+        int configuredCount = 0;
+        foreach (CinemachineThirdPersonFollow follow in thirdPersonFollows)
+        {
+            if (follow == null) continue;
+
+            follow.AvoidObstacles = new CinemachineThirdPersonFollow.ObstacleSettings
+            {
+                Enabled = true,
+                CollisionFilter = collisionMask,
+                IgnoreTag = "Player",
+                CameraRadius = 0.3f,
+                DampingIntoCollision = 0.05f,
+                DampingFromCollision = 0.5f
+            };
+            configuredCount++;
+        }
+
+        return configuredCount;
     }
 
     private void ToggleMainMenu()
