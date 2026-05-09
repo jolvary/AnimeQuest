@@ -12,6 +12,9 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private const string StateMessageType = "world_state";
     private const string DefaultCharacterKey = "robot_kyle";
     private const string DefaultRobotColor = "default";
+    private const string RemoteRobotVisualName = "RemoteRobotKyleVisual";
+    private const string RemoteFallbackVisualName = "RemoteCapsuleFallback";
+    private const string RemoteVisualPlaceholderName = "RemoteVisualPlaceholder";
     private const float BroadcastInterval = 0.18f;
     private const float RemoteLerpSpeed = 12f;
     private const float RemoteAnimationLerpSpeed = 10f;
@@ -19,6 +22,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private const float SocketConnectRetrySeconds = 4f;
     private const float JoinRetrySeconds = 4f;
     private const float CharacterRefreshIntervalSeconds = 10f;
+    private const float ManualSelectionHoldSeconds = 3f;
     private const float MovingVelocityThreshold = 0.08f;
     private const float RunVelocityThreshold = 3.2f;
     private const float WalkAnimationSpeed = 2f;
@@ -53,6 +57,9 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private int _localPlayerMissingLogCount;
     private string _selectedCharacterKey = DefaultCharacterKey;
     private string _selectedRobotColor = DefaultRobotColor;
+    private float _manualCharacterSelectionHoldUntil;
+    private string _lastLoggedBroadcastCharacterKey;
+    private string _lastLoggedBroadcastRobotColor;
     private string _playerStateUserId;
     private bool _hasLoadedPlayerState;
     private bool _isLoadingPlayerState;
@@ -90,8 +97,20 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
 
     public void ForceCharacterProgressionRefresh()
     {
+        DozzleLogger.Action("Character progression refresh forced", $"current={_selectedCharacterKey};color={_selectedRobotColor};loading={_isLoadingCharacterProgression}");
         _nextCharacterRefreshAt = 0f;
         RefreshCharacterSelection();
+    }
+
+    public void ApplySelectedCharacterNow(string characterKey, string robotColor)
+    {
+        _selectedCharacterKey = NormalizeText(characterKey, DefaultCharacterKey);
+        _selectedRobotColor = NormalizeText(robotColor, DefaultRobotColor);
+        _manualCharacterSelectionHoldUntil = Time.unscaledTime + ManualSelectionHoldSeconds;
+        _nextBroadcastAt = 0f;
+        _nextCharacterRefreshAt = Time.unscaledTime + 1f;
+        ApplyLocalRobotColor(_selectedRobotColor);
+        DozzleLogger.Action("World multiplayer character selection applied", $"character={_selectedCharacterKey};color={_selectedRobotColor};client={ShortClientId()};channel={(_worldChannel != null ? _worldChannel.Id : "none")};socketReady={(_socket != null ? "yes" : "no")}");
     }
 
     private void MaintainWorldConnection()
@@ -395,9 +414,24 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
             var progression = JsonUtility.FromJson<ApiClient.CharacterProgressionResponse>(json);
             if (progression?.profile != null)
             {
-                _selectedCharacterKey = NormalizeText(progression.profile.selectedCharacterKey, DefaultCharacterKey);
-                _selectedRobotColor = NormalizeText(progression.profile.robotColor, DefaultRobotColor);
+                string nextCharacterKey = NormalizeText(progression.profile.selectedCharacterKey, DefaultCharacterKey);
+                string nextRobotColor = NormalizeText(progression.profile.robotColor, DefaultRobotColor);
+                DozzleLogger.Action("Character progression selected", $"previous={_selectedCharacterKey};next={nextCharacterKey};previousColor={_selectedRobotColor};nextColor={nextRobotColor};hold={(Time.unscaledTime < _manualCharacterSelectionHoldUntil ? "yes" : "no")}");
+                if (Time.unscaledTime < _manualCharacterSelectionHoldUntil &&
+                    !string.Equals(nextCharacterKey, _selectedCharacterKey, StringComparison.Ordinal))
+                {
+                    DozzleLogger.Action("Character progression refresh deferred", $"selected={_selectedCharacterKey};refresh={nextCharacterKey}");
+                    return;
+                }
+
+                _manualCharacterSelectionHoldUntil = 0f;
+                _selectedCharacterKey = nextCharacterKey;
+                _selectedRobotColor = nextRobotColor;
                 ApplyLocalRobotColor(_selectedRobotColor);
+            }
+            else
+            {
+                DozzleLogger.Action("Character progression selected", "profile=missing");
             }
         }
         catch (Exception ex)
@@ -457,6 +491,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
                 grounded = animationState.grounded,
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };
+            LogBroadcastCharacterIfChanged(payload);
 
             var sendTask = auth.Socket.WriteChatMessageAsync(_worldChannel.Id, JsonUtility.ToJson(payload));
             var completed = await Task.WhenAny(sendTask, Task.Delay(SocketOperationTimeoutMilliseconds));
@@ -477,6 +512,20 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         {
             _isSending = false;
         }
+    }
+
+    private void LogBroadcastCharacterIfChanged(WorldStatePayload payload)
+    {
+        if (payload == null) return;
+        if (string.Equals(_lastLoggedBroadcastCharacterKey, payload.characterKey, StringComparison.Ordinal) &&
+            string.Equals(_lastLoggedBroadcastRobotColor, payload.robotColor, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastLoggedBroadcastCharacterKey = payload.characterKey;
+        _lastLoggedBroadcastRobotColor = payload.robotColor;
+        DozzleLogger.Action("World multiplayer character broadcast", $"character={payload.characterKey};robotColor={payload.robotColor};channel={_worldChannelId};client={payload.clientId};user={ShortKey(payload.userId)};username={payload.username}");
     }
 
     private LocalAnimationState BuildLocalAnimationState(Transform localPlayer)
@@ -614,9 +663,18 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         string nextRobotColor = NormalizeText(state.robotColor, DefaultRobotColor);
         if (remote.characterKey == nextCharacterKey && remote.robotColor == nextRobotColor) return;
 
+        DozzleLogger.Action("World multiplayer remote character changed", $"remote={ShortKey(ResolveRemoteKey(state))};previous={remote.characterKey};next={nextCharacterKey};previousColor={remote.robotColor};nextColor={nextRobotColor};name={state.username}");
         remote.characterKey = nextCharacterKey;
         remote.robotColor = nextRobotColor;
-        ApplyRobotColor(remote.visual, nextRobotColor);
+        if (remote.visual != null && !IsMountedCharacterVisual(remote.visual))
+        {
+            ApplyRobotColor(remote.visual, nextRobotColor);
+        }
+    }
+
+    private static bool IsMountedCharacterVisual(GameObject visual)
+    {
+        return visual != null && visual.name.StartsWith("RemoteCharacterVisual_", StringComparison.Ordinal);
     }
 
     private void ApplyRemoteAnimationState(RemotePlayer remote, WorldStatePayload state)
@@ -654,22 +712,29 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         var root = new GameObject($"RemotePlayer_{ShortKey(remoteKey)}");
         root.transform.position = new Vector3(state.px, state.py, state.pz);
         root.transform.rotation = Quaternion.Euler(0f, state.ry, 0f);
+        SetUntaggedRecursively(root);
 
-        GameObject visual = CreateRemoteRobotVisual(root.transform, remoteKey);
-        bool usedRobotVisual = visual != null;
-        if (!usedRobotVisual)
+        string characterKey = NormalizeText(state.characterKey, DefaultCharacterKey);
+        string robotColor = NormalizeText(state.robotColor, DefaultRobotColor);
+        bool isRobotCharacter = IsRobotCharacter(characterKey);
+        GameObject visual = isRobotCharacter ? CreateRemoteRobotVisual(root.transform, remoteKey) : CreateRemoteVisualPlaceholder(root.transform);
+        string visualKind = isRobotCharacter ? "robot" : "placeholder";
+        if (visual == null)
         {
             visual = CreateFallbackCapsule(root.transform, remoteKey);
+            visualKind = "capsule";
         }
 
-        string robotColor = NormalizeText(state.robotColor, DefaultRobotColor);
-        ApplyRobotColor(visual, robotColor);
+        if (isRobotCharacter)
+        {
+            ApplyRobotColor(visual, robotColor);
+        }
 
-        var animator = root.GetComponentInChildren<Animator>(true);
+        var animator = visual != null ? visual.GetComponentInChildren<Animator>(true) : null;
         ConfigureRemoteAnimator(animator);
 
         var label = CreateNamePlate(root.transform, string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username);
-        DozzleLogger.Action("World multiplayer remote spawned", $"remote={ShortKey(remoteKey)};user={ShortKey(state.userId)};name={label.text};visual={(usedRobotVisual ? "robot" : "capsule")};character={NormalizeText(state.characterKey, DefaultCharacterKey)};color={robotColor};animator={(animator != null ? "yes" : "no")}");
+        DozzleLogger.Action("World multiplayer remote spawned", $"remote={ShortKey(remoteKey)};user={ShortKey(state.userId)};name={label.text};visual={visualKind};character={characterKey};color={robotColor};animator={(animator != null ? "yes" : "no")}");
         return new RemotePlayer
         {
             root = root,
@@ -678,7 +743,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
             namePlate = label.transform,
             nameLabel = label,
             animator = animator,
-            characterKey = NormalizeText(state.characterKey, DefaultCharacterKey),
+            characterKey = characterKey,
             robotColor = robotColor,
             grounded = true,
             targetPosition = root.transform.position,
@@ -696,21 +761,24 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         }
 
         var visual = Instantiate(source.gameObject, parent, false);
-        visual.name = "RemoteRobotKyleVisual";
+        visual.name = RemoteRobotVisualName;
         visual.transform.localPosition = source == _localPlayer ? Vector3.zero : source.localPosition;
         visual.transform.localRotation = source == _localPlayer ? Quaternion.identity : source.localRotation;
         visual.transform.localScale = source.localScale;
         StripRemoteVisualComponents(visual);
+        SetUntaggedRecursively(visual);
+        SetLayerRecursively(visual, parent != null ? parent.gameObject.layer : visual.layer);
         return visual;
     }
 
     private Transform ResolveRemoteVisualSource()
     {
-        if (_remoteVisualSource != null)
+        if (IsRobotVisualSource(_remoteVisualSource))
         {
             return _remoteVisualSource;
         }
 
+        _remoteVisualSource = null;
         _localPlayer = ResolveLocalPlayer();
         if (_localPlayer == null)
         {
@@ -718,13 +786,26 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         }
 
         _remoteVisualSource = FindChildByName(_localPlayer, "RobotKyle");
-        if (_remoteVisualSource != null)
+        if (IsRobotVisualSource(_remoteVisualSource))
         {
             return _remoteVisualSource;
         }
 
-        _remoteVisualSource = FindRenderableVisualRoot(_localPlayer);
-        return _remoteVisualSource;
+        return null;
+    }
+
+    private static bool IsRobotVisualSource(Transform source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        string name = source.name ?? string.Empty;
+        return string.Equals(name, "RobotKyle", StringComparison.OrdinalIgnoreCase) ||
+               name.IndexOf("RobotKyle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("Robot Kyle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("KyleRobot", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private static Transform FindChildByName(Transform root, string name)
@@ -742,38 +823,13 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         return null;
     }
 
-    private static Transform FindRenderableVisualRoot(Transform localPlayer)
-    {
-        if (localPlayer == null) return null;
-
-        var renderers = localPlayer.GetComponentsInChildren<Renderer>(true);
-        foreach (var renderer in renderers)
-        {
-            if (renderer == null || renderer.GetComponentInParent<Canvas>() != null) continue;
-
-            Transform candidate = renderer.transform;
-            while (candidate.parent != null && candidate.parent != localPlayer)
-            {
-                if (candidate.GetComponent<Animator>() != null)
-                {
-                    return candidate;
-                }
-                candidate = candidate.parent;
-            }
-
-            return candidate;
-        }
-
-        return null;
-    }
-
     private void ApplyLocalRobotColor(string colorKey)
     {
         _localPlayer = ResolveLocalPlayer();
         if (_localPlayer == null) return;
 
-        Transform robot = FindChildByName(_localPlayer, "RobotKyle") ?? FindRenderableVisualRoot(_localPlayer);
-        if (robot != null)
+        Transform robot = FindChildByName(_localPlayer, "RobotKyle");
+        if (IsRobotVisualSource(robot))
         {
             ApplyRobotColor(robot.gameObject, colorKey);
         }
@@ -852,6 +908,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
                 Destroy(component);
             }
         }
+
+        SetUntaggedRecursively(visual);
     }
 
     private static void ConfigureRemoteAnimator(Animator animator)
@@ -862,10 +920,12 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private static GameObject CreateFallbackCapsule(Transform parent, string remoteKey)
     {
         var capsule = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        capsule.name = "RemoteCapsuleFallback";
+        capsule.name = RemoteFallbackVisualName;
         capsule.transform.SetParent(parent, false);
         capsule.transform.localPosition = Vector3.up;
         capsule.transform.localRotation = Quaternion.identity;
+        SetUntaggedRecursively(capsule);
+        SetLayerRecursively(capsule, parent != null ? parent.gameObject.layer : capsule.layer);
 
         var collider = capsule.GetComponent<Collider>();
         if (collider != null) Destroy(collider);
@@ -877,6 +937,60 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         }
 
         return capsule;
+    }
+
+    private static GameObject CreateRemoteVisualPlaceholder(Transform parent)
+    {
+        var placeholder = new GameObject(RemoteVisualPlaceholderName);
+        placeholder.transform.SetParent(parent, false);
+        placeholder.transform.localPosition = Vector3.zero;
+        placeholder.transform.localRotation = Quaternion.identity;
+        placeholder.transform.localScale = Vector3.one;
+        SetUntaggedRecursively(placeholder);
+        SetLayerRecursively(placeholder, parent != null ? parent.gameObject.layer : placeholder.layer);
+        return placeholder;
+    }
+
+    private static bool IsRobotCharacter(string characterKey)
+    {
+        string normalized = NormalizeText(characterKey, DefaultCharacterKey).ToLowerInvariant();
+        return normalized == "robot_kyle" || normalized == "robot_blue" || normalized == "robot_green" || normalized == "robot_red";
+    }
+
+    private static void SetUntaggedRecursively(GameObject obj)
+    {
+        if (obj == null) return;
+
+        try
+        {
+            obj.tag = "Untagged";
+        }
+        catch
+        {
+            // If a build has unusual tag setup, component stripping still keeps this render-only.
+        }
+
+        foreach (Transform child in obj.transform)
+        {
+            if (child != null)
+            {
+                SetUntaggedRecursively(child.gameObject);
+            }
+        }
+    }
+
+    private static void SetLayerRecursively(GameObject obj, int layer)
+    {
+        if (obj == null) return;
+
+        obj.layer = layer;
+        foreach (Transform child in obj.transform)
+        {
+            if (child != null)
+            {
+                SetLayerRecursively(child.gameObject, layer);
+            }
+        }
     }
 
     private Text CreateNamePlate(Transform parent, string username)
@@ -964,6 +1078,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         {
             remote.animationSpeed = 0f;
         }
+
+        NativeCharacterClipMotionDriver.SetRemoteMotionHint(remote.transform, remote.animationSpeed, remote.targetMotionSpeed, remote.grounded);
 
         NativeCharacterAnimationAdapter.Apply(remote.animator, remote.characterKey, remote.animationSpeed, remote.targetMotionSpeed, remote.grounded);
     }

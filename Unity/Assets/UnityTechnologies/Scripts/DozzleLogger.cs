@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 public static class DozzleLogger
 {
     private const int MaxPendingLogs = 100;
+    private const string NakamaClientLogRpc = "client_logs";
     private static readonly List<ClientLogEvent> PendingLogs = new List<ClientLogEvent>();
+    private static bool _isFlushing;
 
     public static event Action<string, string> ErrorReported;
 
@@ -42,11 +45,12 @@ public static class DozzleLogger
 
     public static void FlushPending()
     {
-        if (ApiClient.Instance == null || PendingLogs.Count == 0)
+        if (!CanSendToNakama() || PendingLogs.Count == 0 || _isFlushing)
         {
             return;
         }
 
+        _isFlushing = true;
         var logs = PendingLogs.ToArray();
         PendingLogs.Clear();
 
@@ -54,11 +58,12 @@ public static class DozzleLogger
         {
             Send(logEvent);
         }
+        _isFlushing = false;
     }
 
     private static void EnqueueOrSend(ClientLogEvent logEvent)
     {
-        if (ApiClient.Instance == null)
+        if (!CanSendToNakama())
         {
             if (PendingLogs.Count >= MaxPendingLogs)
             {
@@ -69,6 +74,7 @@ public static class DozzleLogger
             return;
         }
 
+        FlushPending();
         Send(logEvent);
     }
 
@@ -76,18 +82,26 @@ public static class DozzleLogger
     {
         try
         {
-            await ApiClient.Instance.PostClientLog(
-                logEvent.level,
-                logEvent.action,
-                logEvent.details,
-                logEvent.message,
-                logEvent.timestamp
-            );
+            var auth = NakamaAuthManager.Instance;
+            if (auth == null || auth.Client == null || auth.Session == null || auth.Session.IsExpired)
+            {
+                return;
+            }
+
+            logEvent.platform = Application.platform.ToString();
+            logEvent.unityVersion = Application.unityVersion;
+            await auth.Client.RpcAsync(auth.Session, NakamaClientLogRpc, JsonUtility.ToJson(logEvent));
         }
         catch
         {
             // Keep gameplay/UI flows independent from external log delivery.
         }
+    }
+
+    private static bool CanSendToNakama()
+    {
+        var auth = NakamaAuthManager.Instance;
+        return auth != null && auth.Client != null && auth.Session != null && !auth.Session.IsExpired;
     }
 
     private static bool IsUserFacingError(string action)
@@ -125,5 +139,7 @@ public static class DozzleLogger
         public string details;
         public string message;
         public string timestamp;
+        public string platform;
+        public string unityVersion;
     }
 }

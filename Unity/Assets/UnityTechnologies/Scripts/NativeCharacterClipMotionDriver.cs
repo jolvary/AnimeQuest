@@ -16,10 +16,12 @@ public class NativeCharacterClipMotionDriver : MonoBehaviour
     private const float RunReferenceSpeed = 6f;
     private const float JumpVerticalSpeedThreshold = 0.12f;
     private const float JumpPositionDeltaThreshold = 0.015f;
+    private const float RemoteMotionHintMaxAgeSeconds = 1.0f;
 
     private readonly Dictionary<int, DrivenAnimator> _drivenAnimators = new Dictionary<int, DrivenAnimator>();
     private readonly Dictionary<int, MotionSourceState> _motionSources = new Dictionary<int, MotionSourceState>();
     private readonly HashSet<int> _unsupportedAnimators = new HashSet<int>();
+    private static readonly Dictionary<int, RemoteMotionHint> RemoteMotionHints = new Dictionary<int, RemoteMotionHint>();
     private float _nextDiscoveryAt;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -48,6 +50,19 @@ public class NativeCharacterClipMotionDriver : MonoBehaviour
 
         _drivenAnimators.Clear();
         _motionSources.Clear();
+    }
+
+    public static void SetRemoteMotionHint(Transform movementSource, float speed, float motionSpeed, bool grounded)
+    {
+        if (movementSource == null) return;
+
+        RemoteMotionHints[movementSource.GetInstanceID()] = new RemoteMotionHint
+        {
+            Speed = Mathf.Max(0f, speed),
+            MotionSpeed = Mathf.Max(0f, motionSpeed),
+            Grounded = grounded,
+            LastUpdatedAt = Time.unscaledTime,
+        };
     }
 
     private void DriveLocalSelectedCharacter()
@@ -142,6 +157,28 @@ public class NativeCharacterClipMotionDriver : MonoBehaviour
         if (item == null || item.MovementSource == null)
         {
             return new MotionState { Grounded = true };
+        }
+
+        int key = item.MovementSource.GetInstanceID();
+        if (RemoteMotionHints.TryGetValue(key, out var hint))
+        {
+            if (Time.unscaledTime - hint.LastUpdatedAt <= RemoteMotionHintMaxAgeSeconds)
+            {
+                float speed = Mathf.Max(0f, hint.Speed);
+                if (speed <= MovingThreshold && hint.MotionSpeed > MovingThreshold)
+                {
+                    speed = WalkReferenceSpeed;
+                }
+
+                return new MotionState
+                {
+                    Speed = speed,
+                    Grounded = hint.Grounded,
+                    Jumping = !hint.Grounded,
+                };
+            }
+
+            RemoteMotionHints.Remove(key);
         }
 
         return ResolveTransformMotion(item.MovementSource, item);
@@ -529,5 +566,13 @@ public class NativeCharacterClipMotionDriver : MonoBehaviour
 
             CurrentClip = null;
         }
+    }
+
+    private class RemoteMotionHint
+    {
+        public float Speed;
+        public float MotionSpeed;
+        public bool Grounded;
+        public float LastUpdatedAt;
     }
 }

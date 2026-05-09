@@ -14,6 +14,9 @@ public class WorldCharacterSkinApplier : MonoBehaviour
     private const string DefaultCharacterKey = "robot_kyle";
     private const string DefaultRobotColor = "default";
     private const string LocalOverrideRootName = "SelectedCharacterVisualRoot";
+    private const string RemoteRobotVisualName = "RemoteRobotKyleVisual";
+    private const string RemoteFallbackVisualName = "RemoteCapsuleFallback";
+    private const string RemoteCharacterVisualPrefix = "RemoteCharacterVisual_";
     private const float RefreshIntervalSeconds = 0.25f;
 
     private NakamaWorldMultiplayerController _world;
@@ -26,6 +29,7 @@ public class WorldCharacterSkinApplier : MonoBehaviour
     private GameObject _localOverrideVisual;
     private string _localAppliedKey;
     private float _nextRefreshAt;
+    private readonly HashSet<string> _diagnosticLogs = new HashSet<string>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void Bootstrap()
@@ -45,6 +49,14 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         ApplyRemoteAppearances();
     }
 
+    public void ApplyLocalSelectionNow(string characterKey, string robotColor)
+    {
+        _nextRefreshAt = 0f;
+        ResolveWorldController();
+        ApplyLocalAppearance(NormalizeText(characterKey, DefaultCharacterKey), NormalizeText(robotColor, DefaultRobotColor));
+        ApplyRemoteAppearances();
+    }
+
     private void Update()
     {
         DriveLocalOverrideAnimation(_localAppliedKey);
@@ -61,12 +73,17 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         if (_world != null) return;
 
         _world = FindFirstObjectByType<NakamaWorldMultiplayerController>(FindObjectsInactive.Include);
-        if (_world == null) return;
+        if (_world == null)
+        {
+            LogOnce("world-missing", "Character visual world missing", "No NakamaWorldMultiplayerController found.");
+            return;
+        }
 
         Type type = _world.GetType();
         _selectedCharacterKeyField = type.GetField("_selectedCharacterKey", BindingFlags.Instance | BindingFlags.NonPublic);
         _selectedRobotColorField = type.GetField("_selectedRobotColor", BindingFlags.Instance | BindingFlags.NonPublic);
         _remotePlayersField = type.GetField("_remotePlayers", BindingFlags.Instance | BindingFlags.NonPublic);
+        DozzleLogger.Action("Character visual world resolved", $"selectedField={(_selectedCharacterKeyField != null ? "yes" : "no")};colorField={(_selectedRobotColorField != null ? "yes" : "no")};remotesField={(_remotePlayersField != null ? "yes" : "no")}");
     }
 
     private void ApplyLocalAppearance()
@@ -75,10 +92,20 @@ public class WorldCharacterSkinApplier : MonoBehaviour
 
         string characterKey = ReadStringField(_world, _selectedCharacterKeyField, DefaultCharacterKey);
         string robotColor = ReadStringField(_world, _selectedRobotColorField, DefaultRobotColor);
-        _localPlayer = ResolveLocalPlayer();
-        if (_localPlayer == null) return;
+        ApplyLocalAppearance(characterKey, robotColor);
+    }
 
-        _localRobotVisual = _localRobotVisual != null ? _localRobotVisual : FindChildByName(_localPlayer, "RobotKyle") ?? FindRenderableVisualRoot(_localPlayer);
+    private void ApplyLocalAppearance(string characterKey, string robotColor)
+    {
+        _localPlayer = ResolveLocalPlayer();
+        if (_localPlayer == null)
+        {
+            LogOnce("local-player-missing", "Local character visual skipped", $"reason=no-local-player;character={characterKey}");
+            return;
+        }
+
+        _localRobotVisual = ResolveLocalRobotVisual();
+        bool changed = !string.Equals(_localAppliedKey, characterKey, StringComparison.Ordinal);
 
         if (IsRobotCharacter(characterKey))
         {
@@ -86,6 +113,10 @@ public class WorldCharacterSkinApplier : MonoBehaviour
             SetLocalRobotVisualEnabled(true);
             ApplyRobotColor(_localRobotVisual != null ? _localRobotVisual.gameObject : null, robotColor);
             _localAppliedKey = characterKey;
+            if (changed)
+            {
+                DozzleLogger.Action("Local character visual robot applied", $"character={characterKey};robotColor={robotColor};robotVisual={ObjectName(_localRobotVisual)}");
+            }
             return;
         }
 
@@ -96,6 +127,7 @@ public class WorldCharacterSkinApplier : MonoBehaviour
             SetLocalRobotVisualEnabled(true);
             ApplyRobotColor(_localRobotVisual != null ? _localRobotVisual.gameObject : null, robotColor);
             _localAppliedKey = DefaultCharacterKey;
+            DozzleLogger.Action("Local character visual fallback", $"reason=prefab-not-found;character={characterKey};robotColor={robotColor}");
             return;
         }
 
@@ -107,6 +139,7 @@ public class WorldCharacterSkinApplier : MonoBehaviour
             {
                 SetLocalRobotVisualEnabled(true);
                 _localAppliedKey = DefaultCharacterKey;
+                DozzleLogger.Action("Local character visual fallback", $"reason=no-mount;character={characterKey};prefab={prefab.name}");
                 return;
             }
 
@@ -115,6 +148,7 @@ public class WorldCharacterSkinApplier : MonoBehaviour
                 GameObject replacement = InstantiateCharacterVisual(prefab, mount, $"SelectedCharacterVisual_{characterKey}", characterKey);
                 if (!HasRenderableVisual(replacement))
                 {
+                    SetVisualRenderersEnabled(replacement, false);
                     Destroy(replacement);
                     throw new InvalidOperationException($"Character prefab {prefab.name} has no renderers after setup.");
                 }
@@ -185,31 +219,210 @@ public class WorldCharacterSkinApplier : MonoBehaviour
 
             if (IsRobotCharacter(characterKey))
             {
-                SetVisualRenderersEnabled(visual, true);
-                ApplyRobotColor(visual, robotColor);
+                GameObject robotVisual = EnsureRemoteRobotVisual(root, visual, robotColor, entry.Key);
+                visualField?.SetValue(remote, robotVisual);
+                var robotAnimator = robotVisual != null ? robotVisual.GetComponentInChildren<Animator>(true) : null;
+                NativeCharacterAnimationAdapter.Configure(robotAnimator, DefaultCharacterKey);
+                animatorField?.SetValue(remote, robotAnimator);
                 continue;
             }
 
             GameObject prefab = CharacterPrefabCatalog.ResolvePrefab(characterKey);
-            if (prefab == null) continue;
-
-            if (visual != null && visual.name.StartsWith($"RemoteCharacterVisual_{characterKey}", StringComparison.Ordinal))
+            if (prefab == null)
             {
+                DozzleLogger.Action("Remote character visual fallback", $"remote={entry.Key};reason=prefab-not-found;character={characterKey};robotColor={robotColor}");
+                continue;
+            }
+
+            if (visual != null && visual.name.StartsWith($"{RemoteCharacterVisualPrefix}{characterKey}", StringComparison.Ordinal))
+            {
+                SetVisualRenderersEnabled(visual, true);
+                RemoveRemoteVisualSiblings(root.transform, visual.transform);
                 animatorField?.SetValue(remote, visual.GetComponentInChildren<Animator>(true));
                 continue;
             }
 
             if (visual != null)
             {
-                Destroy(visual);
+                DisableAndDestroyVisual(visual);
             }
 
-            GameObject replacement = InstantiateCharacterVisual(prefab, root.transform, $"RemoteCharacterVisual_{characterKey}", characterKey);
+            GameObject replacement = InstantiateCharacterVisual(prefab, root.transform, $"{RemoteCharacterVisualPrefix}{characterKey}", characterKey);
+            RemoveRemoteVisualSiblings(root.transform, replacement.transform);
             visualField?.SetValue(remote, replacement);
             var animator = replacement.GetComponentInChildren<Animator>(true);
             animatorField?.SetValue(remote, animator);
             DozzleLogger.Action("Remote character visual applied", $"remote={entry.Key};character={characterKey};prefab={prefab.name};animator={(animator != null ? "yes" : "no")}");
         }
+    }
+
+    private GameObject EnsureRemoteRobotVisual(GameObject root, GameObject currentVisual, string robotColor, object remoteKey)
+    {
+        if (root == null) return currentVisual;
+
+        GameObject robotVisual = null;
+        bool created = false;
+
+        if (IsRemoteRobotVisual(currentVisual))
+        {
+            robotVisual = currentVisual;
+        }
+        else if (currentVisual != null)
+        {
+            DisableAndDestroyVisual(currentVisual);
+        }
+
+        if (robotVisual == null)
+        {
+            RemoveRemoteVisualSiblings(root.transform, null);
+            robotVisual = CreateRemoteRobotVisual(root.transform);
+            if (robotVisual == null)
+            {
+                robotVisual = CreateRemoteFallbackCapsule(root.transform);
+            }
+            created = true;
+        }
+
+        if (robotVisual != null)
+        {
+            robotVisual.SetActive(true);
+            StripGameplayComponents(robotVisual);
+            SetUntaggedRecursively(robotVisual);
+            SetLayerRecursively(robotVisual, root.layer);
+            SetVisualRenderersEnabled(robotVisual, true);
+            ApplyRobotColor(robotVisual, robotColor);
+            RemoveRemoteVisualSiblings(root.transform, robotVisual.transform);
+        }
+
+        if (created)
+        {
+            DozzleLogger.Action("Remote robot visual restored", $"remote={remoteKey};robotColor={robotColor};visual={(robotVisual != null ? robotVisual.name : "none")}");
+        }
+        return robotVisual;
+    }
+
+    private GameObject CreateRemoteRobotVisual(Transform parent)
+    {
+        if (parent == null) return null;
+
+        Transform source = ResolveRemoteRobotVisualSource();
+        if (source == null) return null;
+
+        var visual = Instantiate(source.gameObject, parent, false);
+        visual.name = RemoteRobotVisualName;
+        visual.transform.localPosition = source == _localPlayer ? Vector3.zero : source.localPosition;
+        visual.transform.localRotation = source == _localPlayer ? Quaternion.identity : source.localRotation;
+        visual.transform.localScale = source.localScale;
+        visual.SetActive(true);
+        StripGameplayComponents(visual);
+        SetUntaggedRecursively(visual);
+        SetLayerRecursively(visual, parent != null ? parent.gameObject.layer : visual.layer);
+        SetVisualRenderersEnabled(visual, true);
+        return visual;
+    }
+
+    private Transform ResolveRemoteRobotVisualSource()
+    {
+        _localPlayer = ResolveLocalPlayer();
+        if (_localPlayer == null)
+        {
+            return IsRobotVisualSource(_localRobotVisual) ? _localRobotVisual : null;
+        }
+
+        Transform explicitRobot = FindChildByName(_localPlayer, "RobotKyle");
+        if (IsRobotVisualSource(explicitRobot))
+        {
+            _localRobotVisual = explicitRobot;
+            return _localRobotVisual;
+        }
+
+        return IsRobotVisualSource(_localRobotVisual) ? _localRobotVisual : null;
+    }
+
+    private static bool IsRobotVisualSource(Transform source)
+    {
+        if (source == null) return false;
+
+        string name = source.name ?? string.Empty;
+        return string.Equals(name, "RobotKyle", StringComparison.OrdinalIgnoreCase) ||
+               name.IndexOf("RobotKyle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("Robot Kyle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               name.IndexOf("KyleRobot", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static GameObject CreateRemoteFallbackCapsule(Transform parent)
+    {
+        var capsule = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        capsule.name = RemoteFallbackVisualName;
+        capsule.transform.SetParent(parent, false);
+        capsule.transform.localPosition = Vector3.up;
+        capsule.transform.localRotation = Quaternion.identity;
+        capsule.transform.localScale = Vector3.one;
+
+        var collider = capsule.GetComponent<Collider>();
+        if (collider != null) Destroy(collider);
+        SetUntaggedRecursively(capsule);
+        SetLayerRecursively(capsule, parent != null ? parent.gameObject.layer : capsule.layer);
+        return capsule;
+    }
+
+    private static bool IsRemoteCharacterOverride(GameObject visual)
+    {
+        return visual != null && visual.name.StartsWith(RemoteCharacterVisualPrefix, StringComparison.Ordinal);
+    }
+
+    private static bool IsRemoteRobotVisual(GameObject visual)
+    {
+        if (visual == null) return false;
+
+        string name = visual.name ?? string.Empty;
+        return string.Equals(name, RemoteRobotVisualName, StringComparison.Ordinal) ||
+               string.Equals(name, RemoteFallbackVisualName, StringComparison.Ordinal);
+    }
+
+    private static void RemoveRemoteVisualSiblings(Transform root, Transform activeVisual)
+    {
+        if (root == null) return;
+
+        for (int i = root.childCount - 1; i >= 0; i--)
+        {
+            Transform child = root.GetChild(i);
+            if (child == null || child == activeVisual || (activeVisual != null && child.IsChildOf(activeVisual))) continue;
+            if (!IsRemoteVisualRoot(child)) continue;
+            DisableAndDestroyVisual(child.gameObject);
+        }
+    }
+
+    private static bool IsRemoteVisualRoot(Transform child)
+    {
+        if (child == null) return false;
+
+        string name = child.name ?? string.Empty;
+        if (name.IndexOf("Name", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+        if (child.GetComponentInChildren<Text>(true) != null) return false;
+        if (child.GetComponentInChildren<Canvas>(true) != null) return false;
+
+        return string.Equals(name, RemoteRobotVisualName, StringComparison.Ordinal) ||
+               string.Equals(name, RemoteFallbackVisualName, StringComparison.Ordinal) ||
+               name.StartsWith(RemoteCharacterVisualPrefix, StringComparison.Ordinal) ||
+               HasRenderableVisual(child.gameObject);
+    }
+
+    private static void DisableAndDestroyVisual(GameObject visual)
+    {
+        if (visual == null) return;
+
+        SetVisualRenderersEnabled(visual, false);
+        foreach (var animator in visual.GetComponentsInChildren<Animator>(true))
+        {
+            if (animator != null) animator.enabled = false;
+        }
+        foreach (var behaviour in visual.GetComponentsInChildren<MonoBehaviour>(true))
+        {
+            if (behaviour != null) behaviour.enabled = false;
+        }
+        visual.SetActive(false);
+        Destroy(visual);
     }
 
     private GameObject InstantiateCharacterVisual(GameObject prefab, Transform parent, string name, string characterKey)
@@ -221,6 +434,8 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         visual.transform.localScale = Vector3.one;
         visual.SetActive(true);
         StripGameplayComponents(visual);
+        SetUntaggedRecursively(visual);
+        SetLayerRecursively(visual, parent != null ? parent.gameObject.layer : visual.layer);
         SetVisualRenderersEnabled(visual, true);
         CharacterPrefabCatalog.ConfigureAnimatorForCharacter(characterKey, visual.GetComponentInChildren<Animator>(true));
         return visual;
@@ -247,6 +462,26 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         return _localOverrideRoot;
     }
 
+    private Transform ResolveLocalRobotVisual()
+    {
+        if (_localPlayer == null) return _localRobotVisual;
+
+        Transform explicitRobot = FindChildByName(_localPlayer, "RobotKyle");
+        if (IsRobotVisualSource(explicitRobot))
+        {
+            _localRobotVisual = explicitRobot;
+            return _localRobotVisual;
+        }
+
+        if (IsRobotVisualSource(_localRobotVisual))
+        {
+            return _localRobotVisual;
+        }
+
+        _localRobotVisual = null;
+        return null;
+    }
+
     private void SetLocalRobotVisualEnabled(bool enabled)
     {
         if (_localRobotVisual == null) return;
@@ -264,7 +499,9 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         {
             for (int i = _localOverrideRoot.childCount - 1; i >= 0; i--)
             {
-                Destroy(_localOverrideRoot.GetChild(i).gameObject);
+                GameObject child = _localOverrideRoot.GetChild(i).gameObject;
+                SetVisualRenderersEnabled(child, false);
+                Destroy(child);
             }
         }
 
@@ -284,68 +521,25 @@ public class WorldCharacterSkinApplier : MonoBehaviour
                 continue;
             }
 
-            if (component is Collider || component is Rigidbody || component is CharacterController || component is Camera || component is AudioListener)
+            if (component is Collider || component is Rigidbody || component is CharacterController || component is Camera || component is AudioListener || component is MonoBehaviour)
             {
                 Destroy(component);
                 continue;
             }
-
-            if (component is MonoBehaviour behaviour && ShouldStripMonoBehaviour(behaviour))
-            {
-                behaviour.enabled = false;
-                Destroy(component);
-            }
         }
-    }
-
-    private static bool ShouldStripMonoBehaviour(MonoBehaviour behaviour)
-    {
-        if (behaviour == null) return false;
-        if (behaviour is StarterAssetsInputs) return true;
-
-        string name = behaviour.GetType().Name ?? string.Empty;
-        string fullName = behaviour.GetType().FullName ?? name;
-        if (string.Equals(name, "GhostScript", StringComparison.Ordinal) || string.Equals(fullName, "Sample.GhostScript", StringComparison.Ordinal)) return true;
-        if (ContainsAny(name, "Animator", "Animation", "IK", "Rig")) return false;
-
-        return ContainsAny(fullName,
-            "Input",
-            "Controller",
-            "CharacterControl",
-            "CharacterMovement",
-            "MovementController",
-            "MoveController",
-            "ThirdPerson",
-            "FirstPerson",
-            "CameraController",
-            "PlayerController");
-    }
-
-    private static bool ContainsAny(string value, params string[] terms)
-    {
-        if (string.IsNullOrWhiteSpace(value) || terms == null) return false;
-        foreach (string term in terms)
-        {
-            if (!string.IsNullOrWhiteSpace(term) && value.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private Transform ResolveLocalPlayer()
     {
         if (_localPlayer != null) return _localPlayer;
 
-        var inputs = FindFirstObjectByType<StarterAssetsInputs>();
+        var inputs = FindFirstObjectByType<StarterAssetsInputs>(FindObjectsInactive.Include);
         if (inputs != null) return inputs.transform;
 
         var taggedPlayer = GameObject.FindGameObjectWithTag("Player");
         if (taggedPlayer != null) return taggedPlayer.transform;
 
-        var characterController = FindFirstObjectByType<CharacterController>();
+        var characterController = FindFirstObjectByType<CharacterController>(FindObjectsInactive.Include);
         return characterController != null ? characterController.transform : null;
     }
 
@@ -364,31 +558,6 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         return null;
     }
 
-    private static Transform FindRenderableVisualRoot(Transform localPlayer)
-    {
-        if (localPlayer == null) return null;
-
-        var renderers = localPlayer.GetComponentsInChildren<Renderer>(true);
-        foreach (var renderer in renderers)
-        {
-            if (renderer == null || renderer.GetComponentInParent<Canvas>() != null) continue;
-
-            Transform candidate = renderer.transform;
-            while (candidate.parent != null && candidate.parent != localPlayer)
-            {
-                if (candidate.GetComponent<Animator>() != null)
-                {
-                    return candidate;
-                }
-                candidate = candidate.parent;
-            }
-
-            return candidate;
-        }
-
-        return null;
-    }
-
     private static void SetVisualRenderersEnabled(GameObject visual, bool enabled)
     {
         if (visual == null) return;
@@ -396,6 +565,42 @@ public class WorldCharacterSkinApplier : MonoBehaviour
         {
             if (renderer == null || renderer.GetComponentInParent<Canvas>() != null) continue;
             renderer.enabled = enabled;
+        }
+    }
+
+    private static void SetUntaggedRecursively(GameObject obj)
+    {
+        if (obj == null) return;
+
+        try
+        {
+            obj.tag = "Untagged";
+        }
+        catch
+        {
+            // Unusual tag setups should not block render-only isolation.
+        }
+
+        foreach (Transform child in obj.transform)
+        {
+            if (child != null)
+            {
+                SetUntaggedRecursively(child.gameObject);
+            }
+        }
+    }
+
+    private static void SetLayerRecursively(GameObject obj, int layer)
+    {
+        if (obj == null) return;
+
+        obj.layer = layer;
+        foreach (Transform child in obj.transform)
+        {
+            if (child != null)
+            {
+                SetLayerRecursively(child.gameObject, layer);
+            }
         }
     }
 
@@ -451,6 +656,19 @@ public class WorldCharacterSkinApplier : MonoBehaviour
     {
         if (target == null || field == null) return fallback;
         return NormalizeText(field.GetValue(target) as string, fallback);
+    }
+
+    private void LogOnce(string key, string action, string details)
+    {
+        if (_diagnosticLogs.Contains(key)) return;
+
+        _diagnosticLogs.Add(key);
+        DozzleLogger.Action(action, details);
+    }
+
+    private static string ObjectName(UnityEngine.Object obj)
+    {
+        return obj != null ? obj.name : "none";
     }
 
     private static string NormalizeText(string value, string fallback)
@@ -580,24 +798,46 @@ public static class CharacterPrefabCatalog
 {
     private static CharacterPrefabReferences _references;
     private static bool _referencesLoadAttempted;
+    private static bool _referencesLoadLogged;
+    private static readonly HashSet<string> ResolutionLogs = new HashSet<string>();
 
     public static GameObject ResolvePrefab(string characterKey)
     {
         string key = string.IsNullOrWhiteSpace(characterKey) ? "robot_kyle" : characterKey.Trim();
         if (IsRobotCharacter(key)) return null;
 
+        var direct = ResolveFromReferences(key);
+        if (direct != null)
+        {
+            LogResolution(key, "references", direct);
+            return direct;
+        }
+
         var resource = Resources.Load<GameObject>($"CharacterPrefabs/{SlotNameForKey(key)}");
-        if (resource != null) return resource;
+        if (resource != null)
+        {
+            LogResolution(key, "resources", resource);
+            return resource;
+        }
 
 #if UNITY_EDITOR
         var editorPrefab = ResolveFromAssetDatabase(key);
-        if (editorPrefab != null) return editorPrefab;
+        if (editorPrefab != null)
+        {
+            LogResolution(key, "editor", editorPrefab);
+            return editorPrefab;
+        }
 #endif
 
-        var direct = ResolveFromReferences(key);
-        if (direct != null) return direct;
+        var loaded = ResolveLoadedPrefab(key);
+        if (loaded != null)
+        {
+            LogResolution(key, "loaded", loaded);
+            return loaded;
+        }
 
-        return ResolveLoadedPrefab(key);
+        LogResolution(key, "failed", null);
+        return null;
     }
 
     private static GameObject ResolveFromReferences(string key)
@@ -606,6 +846,7 @@ public static class CharacterPrefabCatalog
         {
             _referencesLoadAttempted = true;
             _references = Resources.Load<CharacterPrefabReferences>("CharacterPrefabReferences");
+            LogReferenceLoad();
         }
 
         if (_references == null) return null;
@@ -659,6 +900,35 @@ public static class CharacterPrefabCatalog
         }
 
         return null;
+    }
+
+    private static void LogResolution(string key, string source, GameObject prefab)
+    {
+        string logKey = $"{key}:{source}";
+        if (ResolutionLogs.Contains(logKey)) return;
+
+        ResolutionLogs.Add(logKey);
+        DozzleLogger.Action("Character prefab resolution", $"character={key};source={source};prefab={(prefab != null ? prefab.name : "none")}");
+    }
+
+    private static void LogReferenceLoad()
+    {
+        if (_referencesLoadLogged) return;
+
+        _referencesLoadLogged = true;
+        if (_references == null)
+        {
+            DozzleLogger.Action("Character prefab references loaded", "loaded=no;resource=CharacterPrefabReferences");
+            return;
+        }
+
+        DozzleLogger.Action("Character prefab references loaded",
+            $"loaded=yes;ghost={PrefabState(_references.ghostCharacterPrefab)};skeleton={PrefabState(_references.skeletonPrefab)};tinyMale={PrefabState(_references.tinyHeroMalePbrPrefab)};tinyFemale={PrefabState(_references.tinyHeroFemalePbrPrefab)};sciFiHp={PrefabState(_references.sciFiHpCharacterPrefab)};sciFiPbr={PrefabState(_references.sciFiPbrCharacterPrefab)};sciFiPolyart={PrefabState(_references.sciFiPolyartCharacterPrefab)}");
+    }
+
+    private static string PrefabState(GameObject prefab)
+    {
+        return prefab != null ? prefab.name : "null";
     }
 
     private static bool IsRobotCharacter(string characterKey)

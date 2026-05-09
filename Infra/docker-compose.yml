@@ -54,6 +54,7 @@ services:
       - "7351:7351"
     volumes:
       - ./nakama/local.yml:/nakama/data/local.yml:ro
+      - ./nakama/modules:/nakama/data/modules:ro
 
   api:
     build: ../Server/api

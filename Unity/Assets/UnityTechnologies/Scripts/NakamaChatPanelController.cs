@@ -12,6 +12,7 @@ public class NakamaChatPanelController : MonoBehaviour
     private const int MaxChatMessageLength = 900;
     private const int MaxChatPayloadBytes = 3500;
     private const int ChatOperationTimeoutMilliseconds = 5000;
+    private const float NotificationRefreshIntervalSeconds = 12f;
     private static readonly Color PanelRowSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.24f);
     private static readonly Color ComposerSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
 
@@ -34,12 +35,29 @@ public class NakamaChatPanelController : MonoBehaviour
     private ISocket _subscribedSocket;
     private bool _isJoiningChannel;
     private int _joinGeneration;
+    private float _nextNotificationRefreshAt;
+    private bool _isRefreshingNotificationSubscriptions;
+    private string _notificationUserId;
+    private readonly HashSet<string> _joinedNotificationChannelKeys = new HashSet<string>(StringComparer.Ordinal);
     private readonly List<string> _renderedMessageIds = new List<string>();
     private readonly List<ChatDisplayMessage> _pendingMessages = new List<ChatDisplayMessage>();
     private readonly object _pendingMessagesLock = new object();
 
     public string CurrentChannelKey => _activeChannelKey;
     public string GeneralChannelKey => BuildRoomChannelKey(defaultRoomName);
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+    private static void BootstrapNotificationDriver()
+    {
+        if (FindFirstObjectByType<NakamaChatNotificationDriver>(FindObjectsInactive.Include) != null)
+        {
+            return;
+        }
+
+        var obj = new GameObject("NakamaChatNotificationDriver");
+        DontDestroyOnLoad(obj);
+        obj.AddComponent<NakamaChatNotificationDriver>();
+    }
 
     public static string BuildRoomChannelKey(string roomName)
     {
@@ -57,10 +75,42 @@ public class NakamaChatPanelController : MonoBehaviour
         ApplyFonts();
     }
 
+    internal void TickBackgroundNotifications()
+    {
+        if (Time.unscaledTime < _nextNotificationRefreshAt)
+        {
+            return;
+        }
+
+        _nextNotificationRefreshAt = Time.unscaledTime + NotificationRefreshIntervalSeconds;
+
+        if (!TryGetSessionAuth(out var auth) || auth.IsIncognitoSession)
+        {
+            ClearNotificationJoins();
+            return;
+        }
+
+        string userId = auth.Session.UserId;
+        if (!string.Equals(_notificationUserId, userId, StringComparison.Ordinal) || !ReferenceEquals(_subscribedSocket, auth.Socket))
+        {
+            _notificationUserId = userId;
+            _joinedNotificationChannelKeys.Clear();
+        }
+
+        if (_isRefreshingNotificationSubscriptions)
+        {
+            return;
+        }
+
+        RefreshNotificationSubscriptions(auth);
+    }
+
     private void OnEnable()
     {
         EnsureElements();
         SubscribeToSocket();
+        _nextNotificationRefreshAt = 0f;
+        TickBackgroundNotifications();
 
         if (_channel == null)
         {
@@ -72,10 +122,6 @@ public class NakamaChatPanelController : MonoBehaviour
         }
     }
 
-    private void OnDisable()
-    {
-    }
-
     private void OnDestroy()
     {
         UnsubscribeFromSocket();
@@ -84,6 +130,7 @@ public class NakamaChatPanelController : MonoBehaviour
     private void Update()
     {
         FlushPendingMessages();
+        TickBackgroundNotifications();
     }
 
     public async void OpenGeneralChat()
@@ -100,19 +147,8 @@ public class NakamaChatPanelController : MonoBehaviour
 
     public void ConnectGlobalRoomInBackground()
     {
-        if (!TryGetSessionAuth(out var auth) || auth.IsIncognitoSession)
-        {
-            return;
-        }
-
-        string channelKey = GeneralChannelKey;
-        if (_channel != null && string.Equals(_activeChannelKey, channelKey, StringComparison.Ordinal))
-        {
-            return;
-        }
-
-        DozzleLogger.Action("Global chat auto-join requested", $"room={defaultRoomName}");
-        _ = JoinChannel(defaultRoomName, ChannelType.Room, "General Chat", channelKey, hidden: false);
+        _nextNotificationRefreshAt = 0f;
+        TickBackgroundNotifications();
     }
 
     public async void OpenDirectMessage(string userId, string username)
@@ -134,6 +170,120 @@ public class NakamaChatPanelController : MonoBehaviour
         }
 
         await JoinChannel(userId, ChannelType.DirectMessage, label, channelKey, hidden: true);
+    }
+
+    private async void RefreshNotificationSubscriptions(NakamaAuthManager auth)
+    {
+        _isRefreshingNotificationSubscriptions = true;
+        try
+        {
+            if (auth == null || auth.IsIncognitoSession || auth.Session == null)
+            {
+                ClearNotificationJoins();
+                return;
+            }
+
+            if (auth.Socket == null || !auth.IsConnectionReady)
+            {
+                bool connected = await auth.EnsureSocketConnectedAsync(ChatOperationTimeoutMilliseconds);
+                if (!connected)
+                {
+                    DozzleLogger.Error("Chat notification socket unavailable", "Background chat notification channels will retry.");
+                    return;
+                }
+            }
+
+            SubscribeToSocket();
+            await JoinNotificationChannel(defaultRoomName, ChannelType.Room, GeneralChannelKey, hidden: false);
+
+            var friendsTask = auth.Client.ListFriendsAsync(auth.Session, null, 100, null);
+            var completed = await Task.WhenAny(friendsTask, Task.Delay(ChatOperationTimeoutMilliseconds));
+            if (completed != friendsTask)
+            {
+                ObserveBackgroundTask(friendsTask);
+                DozzleLogger.Error("Chat notification friends load timed out", $"timeoutMs={ChatOperationTimeoutMilliseconds}");
+                return;
+            }
+
+            var friends = await friendsTask;
+            int acceptedFriends = 0;
+            int joinedChannels = _joinedNotificationChannelKeys.Count;
+
+            if (friends?.Friends != null)
+            {
+                foreach (var friend in friends.Friends)
+                {
+                    if (friend?.User == null || string.IsNullOrWhiteSpace(friend.User.Id) || !IsAcceptedFriend(friend))
+                    {
+                        continue;
+                    }
+
+                    acceptedFriends++;
+                    await JoinNotificationChannel(friend.User.Id, ChannelType.DirectMessage, BuildDirectChannelKey(friend.User.Id), hidden: true);
+                }
+            }
+
+            DozzleLogger.Action("Chat notification refresh completed", $"friends={acceptedFriends};joined={_joinedNotificationChannelKeys.Count};new={Mathf.Max(0, _joinedNotificationChannelKeys.Count - joinedChannels)}");
+        }
+        catch (Exception ex)
+        {
+            DozzleLogger.Error("Chat notification refresh failed", ex);
+        }
+        finally
+        {
+            _isRefreshingNotificationSubscriptions = false;
+        }
+    }
+
+    private async Task JoinNotificationChannel(string target, ChannelType type, string channelKey, bool hidden)
+    {
+        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(channelKey))
+        {
+            return;
+        }
+
+        if (_joinedNotificationChannelKeys.Contains(channelKey))
+        {
+            return;
+        }
+
+        if (!TryGetAuth(out var auth))
+        {
+            return;
+        }
+
+        var joinTask = auth.Socket.JoinChatAsync(target, type, persistence: true, hidden: hidden);
+        var completed = await Task.WhenAny(joinTask, Task.Delay(ChatOperationTimeoutMilliseconds));
+        if (completed != joinTask)
+        {
+            ObserveBackgroundTask(joinTask);
+            DozzleLogger.Error("Chat notification channel join timed out", $"target={target};key={channelKey};type={type};timeoutMs={ChatOperationTimeoutMilliseconds}");
+            return;
+        }
+
+        var channel = await joinTask;
+        _joinedNotificationChannelKeys.Add(channelKey);
+        DozzleLogger.Action("Chat notification channel joined", $"channel={ShortChannel(channel?.Id)};key={channelKey};type={type};target={target}");
+    }
+
+    private static bool IsAcceptedFriend(IApiFriend friend)
+    {
+        if (friend == null) return false;
+
+        try
+        {
+            return Convert.ToInt32(friend.State) == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void ClearNotificationJoins()
+    {
+        _notificationUserId = null;
+        _joinedNotificationChannelKeys.Clear();
     }
 
     private async Task JoinChannel(string target, ChannelType type, string label, string channelKey, bool hidden)
@@ -210,8 +360,9 @@ public class NakamaChatPanelController : MonoBehaviour
 
             _activeChannelId = _channel.Id;
             _activeChannelKey = channelKey;
+            _joinedNotificationChannelKeys.Add(channelKey);
             SetStatus("Chat ready.");
-            DozzleLogger.Action("Chat channel joined", $"channel={_channel.Id};type={type};target={target}");
+            DozzleLogger.Action("Chat channel joined", $"channel={_channel.Id};key={channelKey};type={type};target={target}");
             await LoadHistory(generation);
             RefreshSendState();
         }
@@ -267,7 +418,7 @@ public class NakamaChatPanelController : MonoBehaviour
             var history = await historyTask;
             if (generation != _joinGeneration || !string.Equals(channelId, _activeChannelId, StringComparison.Ordinal)) return;
 
-            if (history != null && history.Messages != null)
+            if (history?.Messages != null)
             {
                 foreach (var message in history.Messages)
                 {
@@ -331,10 +482,7 @@ public class NakamaChatPanelController : MonoBehaviour
         }
 
         string message = _messageInput != null ? _messageInput.text.Trim() : string.Empty;
-        if (string.IsNullOrWhiteSpace(message))
-        {
-            return;
-        }
+        if (string.IsNullOrWhiteSpace(message)) return;
 
         if (message.Length > MaxChatMessageLength)
         {
@@ -363,7 +511,7 @@ public class NakamaChatPanelController : MonoBehaviour
             });
             SetStatus("Chat ready.");
             ResetScrollToBottom();
-            DozzleLogger.Action("Chat message sent", $"channel={_channel.Id}");
+            DozzleLogger.Action("Chat message sent", $"channel={_channel.Id};key={NormalizeChannelName(_activeChannelKey, "-")}");
         }
         catch (Exception ex)
         {
@@ -378,21 +526,16 @@ public class NakamaChatPanelController : MonoBehaviour
 
     private void SubscribeToSocket()
     {
-        if (NakamaAuthManager.Instance == null || NakamaAuthManager.Instance.Socket == null)
-        {
-            return;
-        }
+        if (NakamaAuthManager.Instance == null || NakamaAuthManager.Instance.Socket == null) return;
 
         var socket = NakamaAuthManager.Instance.Socket;
-        if (_subscribedToSocket && ReferenceEquals(_subscribedSocket, socket))
-        {
-            return;
-        }
+        if (_subscribedToSocket && ReferenceEquals(_subscribedSocket, socket)) return;
 
         UnsubscribeFromSocket();
         socket.ReceivedChannelMessage += OnReceivedChannelMessage;
         _subscribedSocket = socket;
         _subscribedToSocket = true;
+        DozzleLogger.Action("Chat socket subscribed", $"socket=yes;active={ShortChannel(_activeChannelId)};key={NormalizeChannelName(_activeChannelKey, "-")}");
     }
 
     private void UnsubscribeFromSocket()
@@ -411,17 +554,101 @@ public class NakamaChatPanelController : MonoBehaviour
 
     private void OnReceivedChannelMessage(IApiChannelMessage message)
     {
-        if (message == null || string.IsNullOrWhiteSpace(_activeChannelId) || !string.Equals(message.ChannelId, _activeChannelId, StringComparison.Ordinal))
+        if (message == null)
+        {
+            DozzleLogger.Action("Chat message received", "message=null");
+            return;
+        }
+
+        if (IsWorldStateMessage(message.Content))
         {
             return;
         }
 
-        if (!IsFromCurrentUser(message))
+        bool isActiveChannel = !string.IsNullOrWhiteSpace(_activeChannelId) && string.Equals(message.ChannelId, _activeChannelId, StringComparison.Ordinal);
+        bool fromCurrentUser = IsFromCurrentUser(message);
+        string notificationKey = ResolveNotificationChannelKey(message);
+        int subscriberCount = ChatMessageReceived?.GetInvocationList().Length ?? 0;
+
+        DozzleLogger.Action(
+            "Chat message received",
+            $"channel={ShortChannel(message.ChannelId)};active={ShortChannel(_activeChannelId)};activeKey={NormalizeChannelName(_activeChannelKey, "-")};isActive={isActiveChannel};fromSelf={fromCurrentUser};notifyKey={notificationKey};subscribers={subscriberCount};message={ShortId(message.MessageId)};username={NormalizeChannelName(message.Username, "-")};contentBytes={(message.Content != null ? System.Text.Encoding.UTF8.GetByteCount(message.Content) : 0)}");
+
+        if (!fromCurrentUser)
         {
-            ChatMessageReceived?.Invoke(NormalizeChannelName(_activeChannelKey, message.ChannelId));
+            ChatMessageReceived?.Invoke(notificationKey);
+            DozzleLogger.Action("Chat notification emitted", $"key={notificationKey};channel={ShortChannel(message.ChannelId)};active={isActiveChannel}");
+        }
+
+        if (!isActiveChannel)
+        {
+            DozzleLogger.Action("Chat message skipped for inactive channel", $"channel={ShortChannel(message.ChannelId)};active={ShortChannel(_activeChannelId)};key={notificationKey}");
+            return;
         }
 
         EnqueueMessage(ToDisplayMessage(message));
+    }
+
+    private string ResolveNotificationChannelKey(IApiChannelMessage message)
+    {
+        if (message == null) return "chat";
+
+        if (!string.IsNullOrWhiteSpace(_activeChannelId) && string.Equals(message.ChannelId, _activeChannelId, StringComparison.Ordinal))
+        {
+            return NormalizeChannelName(_activeChannelKey, message.ChannelId);
+        }
+
+        string peerId = ResolveDirectMessagePeerId(message.ChannelId);
+        if (!string.IsNullOrWhiteSpace(peerId))
+        {
+            return BuildDirectChannelKey(peerId);
+        }
+
+        string roomName = ResolveRoomName(message.ChannelId);
+        if (!string.IsNullOrWhiteSpace(roomName))
+        {
+            return BuildRoomChannelKey(roomName);
+        }
+
+        return BuildRoomChannelKey(message.ChannelId);
+    }
+
+    private static string ResolveDirectMessagePeerId(string channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId) || !TryGetSessionAuth(out var auth) || auth.Session == null) return null;
+
+        string[] parts = channelId.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 3 || !string.Equals(parts[0], "4", StringComparison.Ordinal)) return null;
+
+        string currentUserId = auth.Session.UserId;
+        if (string.Equals(parts[1], currentUserId, StringComparison.Ordinal)) return parts[2];
+        if (string.Equals(parts[2], currentUserId, StringComparison.Ordinal)) return parts[1];
+        return parts[1];
+    }
+
+    private static string ResolveRoomName(string channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId)) return null;
+
+        string[] parts = channelId.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 2 && string.Equals(parts[0], "1", StringComparison.Ordinal)) return parts[1];
+        return null;
+    }
+
+    private static bool IsWorldStateMessage(string rawContent)
+    {
+        if (string.IsNullOrWhiteSpace(rawContent)) return false;
+        if (rawContent.IndexOf("world_state", StringComparison.OrdinalIgnoreCase) < 0) return false;
+
+        try
+        {
+            var probe = JsonUtility.FromJson<WorldStateProbe>(rawContent);
+            return probe != null && string.Equals(probe.type, "world_state", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return rawContent.IndexOf("\"type\":\"world_state\"", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
     }
 
     private void EnqueueMessage(ChatDisplayMessage message)
@@ -515,10 +742,7 @@ public class NakamaChatPanelController : MonoBehaviour
 
         string username = string.IsNullOrWhiteSpace(message.username) ? "Player" : message.username;
         string text = ExtractMessageText(message.content);
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            text = message.content ?? string.Empty;
-        }
+        if (string.IsNullOrWhiteSpace(text)) text = message.content ?? string.Empty;
 
         CreateMessageRow(username, text);
     }
@@ -607,8 +831,7 @@ public class NakamaChatPanelController : MonoBehaviour
         inputRect.offsetMin = new Vector2(48f, 48f);
         inputRect.offsetMax = new Vector2(-220f, 108f);
 
-        var inputImage = inputObj.GetComponent<Image>();
-        inputImage.color = ComposerSurfaceColor;
+        inputObj.GetComponent<Image>().color = ComposerSurfaceColor;
 
         _messageInput = inputObj.GetComponent<InputField>();
         _messageInput.lineType = InputField.LineType.SingleLine;
@@ -654,8 +877,8 @@ public class NakamaChatPanelController : MonoBehaviour
 
         var rowObj = new GameObject("ChatMessage", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement), typeof(VerticalLayoutGroup));
         rowObj.transform.SetParent(_content, false);
-
         rowObj.GetComponent<Image>().color = PanelRowSurfaceColor;
+
         int lineCount = Math.Max(1, Mathf.CeilToInt(message.Length / 88f));
         float bodyHeight = Mathf.Clamp(24f + lineCount * 18f, 42f, 220f);
         float rowHeight = 39f + bodyHeight;
@@ -842,6 +1065,38 @@ public class NakamaChatPanelController : MonoBehaviour
         return rawContent;
     }
 
+    private static string ShortId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "none";
+        string text = value.Trim();
+        return text.Length <= 8 ? text : text.Substring(0, 8);
+    }
+
+    private static string ShortChannel(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "none";
+        string text = value.Trim();
+        return text.Length <= 36 ? text : $"{text.Substring(0, 16)}...{text.Substring(text.Length - 12)}";
+    }
+
+    private class NakamaChatNotificationDriver : MonoBehaviour
+    {
+        private NakamaChatPanelController _panel;
+
+        private void Update()
+        {
+            if (_panel == null)
+            {
+                _panel = FindFirstObjectByType<NakamaChatPanelController>(FindObjectsInactive.Include);
+            }
+
+            if (_panel != null)
+            {
+                _panel.TickBackgroundNotifications();
+            }
+        }
+    }
+
     private class ChatDisplayMessage
     {
         public string channelId;
@@ -855,5 +1110,11 @@ public class NakamaChatPanelController : MonoBehaviour
     {
         public string content;
         public string message;
+    }
+
+    [Serializable]
+    private class WorldStateProbe
+    {
+        public string type;
     }
 }
