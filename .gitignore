@@ -1,5 +1,5 @@
 # ======================
-# Unity
+# Unity generated files
 # ======================
 [Ll]ibrary/
 [Tt]emp/
@@ -7,16 +7,25 @@
 [Bb]uild/
 [Bb]uilds/
 [Ll]ogs/
-UserSettings/
+[Uu]ser[Ss]ettings/
 
-# ======================
-# Visual Studio / Rider
-# ======================
-.vs/
-.vscode/
-.idea/
+Unity/.utmp/
+Unity/AnimeQuestBuild/
+Unity/AnimeQuestBuildAndroid_BackUpThisFolder_ButDontShipItWithYourGame/
+Unity/Unity_BurstDebugInformation_DoNotShip/
+
+# Unity build artifacts
+*.apk
+*.aab
+*.symbols.zip
+*.unitypackage
+*.keystore
+
+# Unity / IDE generated project files
 *.csproj
 *.sln
+*.suo
+*.tmp
 *.user
 *.userprefs
 *.pidb
@@ -26,10 +35,33 @@ UserSettings/
 *.mdb
 
 # ======================
+# Node / TypeScript
+# ======================
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ======================
+# Secrets / local config
+# ======================
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# ======================
+# IDE / editors
+# ======================
+.vs/
+.vscode/
+.idea/
+
+# ======================
 # OS
 # ======================
 .DS_Store
 Thumbs.db
-node_modules
-Unity/AnimeQuestBuildAndroid.apk
-Unity/AnimeQuestBuildAndroid-0.1.0-v1-IL2CPP.symbols.zip
+desktop.ini

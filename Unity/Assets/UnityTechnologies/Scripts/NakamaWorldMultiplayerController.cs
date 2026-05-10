@@ -12,8 +12,11 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
     private const string StateMessageType = "world_state";
     private const string DefaultCharacterKey = "robot_kyle";
     private const string DefaultRobotColor = "default";
+    private const string LocalOverrideRootName = "SelectedCharacterVisualRoot";
+    private const string LocalSelectedCharacterVisualPrefix = "SelectedCharacterVisual_";
     private const string RemoteRobotVisualName = "RemoteRobotKyleVisual";
     private const string RemoteFallbackVisualName = "RemoteCapsuleFallback";
+    private const string RemoteCharacterVisualPrefix = "RemoteCharacterVisual_";
     private const string RemoteVisualPlaceholderName = "RemoteVisualPlaceholder";
     private const float BroadcastInterval = 0.18f;
     private const float RemoteLerpSpeed = 12f;
@@ -674,7 +677,7 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
 
     private static bool IsMountedCharacterVisual(GameObject visual)
     {
-        return visual != null && visual.name.StartsWith("RemoteCharacterVisual_", StringComparison.Ordinal);
+        return visual != null && visual.name.StartsWith(RemoteCharacterVisualPrefix, StringComparison.Ordinal);
     }
 
     private void ApplyRemoteAnimationState(RemotePlayer remote, WorldStatePayload state)
@@ -765,9 +768,11 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         visual.transform.localPosition = source == _localPlayer ? Vector3.zero : source.localPosition;
         visual.transform.localRotation = source == _localPlayer ? Quaternion.identity : source.localRotation;
         visual.transform.localScale = source.localScale;
+        RemoveRuntimeCharacterCloneChildren(visual.transform);
         StripRemoteVisualComponents(visual);
         SetUntaggedRecursively(visual);
         SetLayerRecursively(visual, parent != null ? parent.gameObject.layer : visual.layer);
+        SetVisualRenderersEnabled(visual, true);
         return visual;
     }
 
@@ -910,6 +915,41 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         }
 
         SetUntaggedRecursively(visual);
+    }
+
+    private static void RemoveRuntimeCharacterCloneChildren(Transform visualRoot)
+    {
+        if (visualRoot == null) return;
+
+        for (int i = visualRoot.childCount - 1; i >= 0; i--)
+        {
+            Transform child = visualRoot.GetChild(i);
+            if (child == null) continue;
+
+            string name = child.name ?? string.Empty;
+            bool isRuntimeCharacterVisual =
+                string.Equals(name, LocalOverrideRootName, StringComparison.Ordinal) ||
+                name.StartsWith(LocalSelectedCharacterVisualPrefix, StringComparison.Ordinal) ||
+                name.StartsWith(RemoteCharacterVisualPrefix, StringComparison.Ordinal);
+
+            if (isRuntimeCharacterVisual)
+            {
+                SetVisualRenderersEnabled(child.gameObject, false);
+                child.gameObject.SetActive(false);
+                Destroy(child.gameObject);
+            }
+        }
+    }
+
+    private static void SetVisualRenderersEnabled(GameObject visual, bool enabled)
+    {
+        if (visual == null) return;
+
+        foreach (var renderer in visual.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null || renderer.GetComponentInParent<Canvas>() != null) continue;
+            renderer.enabled = enabled;
+        }
     }
 
     private static void ConfigureRemoteAnimator(Animator animator)

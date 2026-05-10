@@ -40,7 +40,11 @@ public class MainMenuAuthController : MonoBehaviour
     private StarterAssetsInputs _playerInputs;
     private bool _isMalLinked;
     private bool _isPollingMalLink;
+    private bool _isRefreshingMalStatus;
     private bool _authRequestInProgress;
+    private bool _hasSpawnPoint;
+    private Vector3 _spawnPosition;
+    private float _spawnRotationY;
 
 
     private void Awake()
@@ -64,6 +68,7 @@ public class MainMenuAuthController : MonoBehaviour
         ResolveUserCatalogController();
         ResolveVisualStyle();
         BuildPanels();
+        CaptureSpawnPointIfNeeded();
         ShowLoginPanel();
         RefreshInteractionState();
     }
@@ -254,7 +259,8 @@ public class MainMenuAuthController : MonoBehaviour
         _linkMalButton = CreateButton(parent, "LinkMalButton", "Link MyAnimeList account", new Vector2(0.5f, 0.47f), new Vector2(390f, 48f), new Color(0.22f, 0.62f, 0.88f), OnLinkMyAnimeListPressed);
         _importMalButton = CreateButton(parent, "ImportMalButton", "Import MyAnimeList", new Vector2(0.5f, 0.34f), new Vector2(310f, 48f), new Color(0.23f, 0.77f, 0.27f), OnImportMyAnimeListPressed);
         _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.24f), new Vector2(740f, 36f), 24, Color.black, string.Empty);
-        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.5f, 0.13f), new Vector2(240f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
+        CreateButton(parent, "UnstuckButton", "Unstuck", new Vector2(0.32f, 0.13f), new Vector2(220f, 52f), new Color(0.93f, 0.68f, 0.20f), OnUnstuckPressed);
+        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.68f, 0.13f), new Vector2(220f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
         ApplyMyAnimeListStatus(null);
     }
 
@@ -392,6 +398,23 @@ public class MainMenuAuthController : MonoBehaviour
         onLogoutRequested?.Invoke();
     }
 
+    private void OnUnstuckPressed()
+    {
+        Transform player = ResolveLocalPlayer();
+        if (player == null)
+        {
+            DozzleLogger.Error("Unstuck failed", "No local player transform found.");
+            uiManager?.ShowErrorAlert("Could not find the player to unstuck.");
+            return;
+        }
+
+        CaptureSpawnPointIfNeeded();
+        Vector3 spawnPosition = ResolveSpawnPosition();
+        float spawnRotationY = ResolveSpawnRotationY();
+        TeleportPlayer(player, spawnPosition, spawnRotationY);
+        DozzleLogger.Action("Player unstuck requested", $"x={spawnPosition.x:0.##};y={spawnPosition.y:0.##};z={spawnPosition.z:0.##};rotationY={spawnRotationY:0.##}");
+    }
+
     private async void OnLinkMyAnimeListPressed()
     {
         if (ApiClient.Instance == null || _isPollingMalLink)
@@ -420,11 +443,12 @@ public class MainMenuAuthController : MonoBehaviour
 
     private async void RefreshMyAnimeListStatus()
     {
-        if (ApiClient.Instance == null || _malImportStatus == null)
+        if (ApiClient.Instance == null || _malImportStatus == null || _isRefreshingMalStatus)
         {
             return;
         }
 
+        _isRefreshingMalStatus = true;
         try
         {
             SetMyAnimeListButtons(false);
@@ -439,6 +463,10 @@ public class MainMenuAuthController : MonoBehaviour
             DozzleLogger.Error("MAL status failed", ex);
             SetMyAnimeListButtons(true);
         }
+        finally
+        {
+            _isRefreshingMalStatus = false;
+        }
     }
 
     private async Task PollMyAnimeListLinkStatus()
@@ -449,6 +477,11 @@ public class MainMenuAuthController : MonoBehaviour
             for (int attempt = 0; attempt < 30; attempt++)
             {
                 await Task.Delay(2000);
+                if (ApiClient.Instance == null)
+                {
+                    return;
+                }
+
                 var status = await ApiClient.Instance.GetMyAnimeListOAuthStatus();
                 if (status != null && status.linked)
                 {
@@ -462,8 +495,9 @@ public class MainMenuAuthController : MonoBehaviour
                 }
             }
 
-            ApplyMyAnimeListStatus(null);
-            if (_malImportStatus != null) _malImportStatus.text = "Finish authorization in your browser.";
+            var finalStatus = ApiClient.Instance != null ? await ApiClient.Instance.GetMyAnimeListOAuthStatus() : null;
+            ApplyMyAnimeListStatus(finalStatus);
+            if (!_isMalLinked && _malImportStatus != null) _malImportStatus.text = "Finish authorization in your browser.";
         }
         finally
         {
@@ -625,6 +659,19 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnEnable()
     {
+        CaptureSpawnPointIfNeeded();
+        RefreshInteractionState();
+        if (_loggedInPanel != null && _loggedInPanel.activeSelf)
+        {
+            RefreshMyAnimeListStatus();
+        }
+    }
+
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus) return;
+
+        CaptureSpawnPointIfNeeded();
         RefreshInteractionState();
         if (_loggedInPanel != null && _loggedInPanel.activeSelf)
         {
@@ -656,7 +703,7 @@ public class MainMenuAuthController : MonoBehaviour
     {
         if (_playerInputs == null)
         {
-            _playerInputs = FindFirstObjectByType<StarterAssetsInputs>();
+            _playerInputs = FindFirstObjectByType<StarterAssetsInputs>(FindObjectsInactive.Include);
             if (_playerInputs == null) return;
         }
 
@@ -671,6 +718,128 @@ public class MainMenuAuthController : MonoBehaviour
             _playerInputs.LookInput(Vector2.zero);
             _playerInputs.JumpInput(false);
             _playerInputs.SprintInput(false);
+        }
+    }
+
+    private void CaptureSpawnPointIfNeeded()
+    {
+        if (_hasSpawnPoint) return;
+
+        Transform player = ResolveLocalPlayer();
+        if (player == null) return;
+
+        _spawnPosition = player.position;
+        _spawnRotationY = player.eulerAngles.y;
+        _hasSpawnPoint = true;
+        DozzleLogger.Action("Unstuck spawn captured", $"x={_spawnPosition.x:0.##};y={_spawnPosition.y:0.##};z={_spawnPosition.z:0.##};rotationY={_spawnRotationY:0.##}");
+    }
+
+    private Vector3 ResolveSpawnPosition()
+    {
+        if (TryFindSpawnTransform(out Transform spawn))
+        {
+            return spawn.position;
+        }
+
+        return _hasSpawnPoint ? _spawnPosition : new Vector3(0f, 2f, 0f);
+    }
+
+    private float ResolveSpawnRotationY()
+    {
+        if (TryFindSpawnTransform(out Transform spawn))
+        {
+            return spawn.eulerAngles.y;
+        }
+
+        return _hasSpawnPoint ? _spawnRotationY : 0f;
+    }
+
+    private static bool TryFindSpawnTransform(out Transform spawn)
+    {
+        spawn = null;
+
+        string[] tags = { "Respawn", "Spawn" };
+        foreach (string tag in tags)
+        {
+            try
+            {
+                GameObject tagged = GameObject.FindGameObjectWithTag(tag);
+                if (tagged != null)
+                {
+                    spawn = tagged.transform;
+                    return true;
+                }
+            }
+            catch (UnityException)
+            {
+                // Some projects do not define both common spawn tags.
+            }
+        }
+
+        string[] names = { "PlayerSpawn", "Spawn", "spawn", "StartPosition", "PlayerStart" };
+        foreach (string name in names)
+        {
+            GameObject named = GameObject.Find(name);
+            if (named != null)
+            {
+                spawn = named.transform;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private Transform ResolveLocalPlayer()
+    {
+        if (_playerInputs == null)
+        {
+            _playerInputs = FindFirstObjectByType<StarterAssetsInputs>(FindObjectsInactive.Include);
+        }
+
+        if (_playerInputs != null) return _playerInputs.transform;
+
+        try
+        {
+            GameObject taggedPlayer = GameObject.FindGameObjectWithTag("Player");
+            if (taggedPlayer != null) return taggedPlayer.transform;
+        }
+        catch (UnityException)
+        {
+        }
+
+        CharacterController characterController = FindFirstObjectByType<CharacterController>(FindObjectsInactive.Include);
+        return characterController != null ? characterController.transform : null;
+    }
+
+    private void TeleportPlayer(Transform player, Vector3 position, float rotationY)
+    {
+        if (player == null) return;
+
+        CharacterController characterController = player.GetComponent<CharacterController>();
+        bool wasControllerEnabled = characterController != null && characterController.enabled;
+        if (wasControllerEnabled)
+        {
+            characterController.enabled = false;
+        }
+
+        player.position = position;
+        player.rotation = Quaternion.Euler(0f, rotationY, 0f);
+        Physics.SyncTransforms();
+
+        if (wasControllerEnabled)
+        {
+            characterController.enabled = true;
+        }
+
+        StarterAssetsInputs inputs = player.GetComponent<StarterAssetsInputs>();
+        if (inputs != null)
+        {
+            _playerInputs = inputs;
+            inputs.MoveInput(Vector2.zero);
+            inputs.LookInput(Vector2.zero);
+            inputs.JumpInput(false);
+            inputs.SprintInput(false);
         }
     }
 
