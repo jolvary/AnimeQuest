@@ -304,7 +304,7 @@ public class CharacterPanelController : MonoBehaviour
         }
 
         DozzleLogger.Action("Character panel references",
-            $"reason={reason};loaded=yes;ghost={PrefabName(references.ghostCharacterPrefab)};skeleton={PrefabName(references.skeletonPrefab)};tinyMale={PrefabName(references.tinyHeroMalePbrPrefab)};tinyFemale={PrefabName(references.tinyHeroFemalePbrPrefab)};sciFiHp={PrefabName(references.sciFiHpCharacterPrefab)};sciFiPbr={PrefabName(references.sciFiPbrCharacterPrefab)};sciFiPolyart={PrefabName(references.sciFiPolyartCharacterPrefab)};sampleHero={PrefabName(references.sampleHeroPrefab)}");
+            $"reason={reason};loaded=yes;ghost={PrefabName(references.ghostCharacterPrefab)};skeleton={PrefabName(references.skeletonPrefab)};tinyMale={PrefabName(references.tinyHeroMalePbrPrefab)};tinyFemale={PrefabName(references.tinyHeroFemalePbrPrefab)};sciFiHp={PrefabName(references.sciFiHpCharacterPrefab)};sciFiPbr={PrefabName(references.sciFiPbrCharacterPrefab)};sciFiPolyart={PrefabName(references.sciFiPolyartCharacterPrefab)}");
     }
 
     private static void LogCharacterPrefabCheck(string selectedCharacterKey, string selectedRobotColor, string reason)
@@ -360,12 +360,11 @@ public class CharacterPanelController : MonoBehaviour
             case "skeleton": return references.skeletonPrefab;
             case "tiny_hero":
             case "tiny_hero_male": return references.tinyHeroMalePbrPrefab != null ? references.tinyHeroMalePbrPrefab : references.tinyHeroPrefab;
-            case "tiny_hero_female": return references.tinyHeroFemalePbrPrefab != null ? references.tinyHeroFemalePbrPrefab : references.sampleHeroPrefab;
+            case "tiny_hero_female": return references.tinyHeroFemalePbrPrefab != null ? references.tinyHeroFemalePbrPrefab : references.tinyHeroPrefab;
             case "robot_hero": return references.robotHeroPrefab;
             case "scifi_hp_character": return references.sciFiHpCharacterPrefab;
             case "scifi_pbr_character": return references.sciFiPbrCharacterPrefab;
             case "scifi_polyart_character": return references.sciFiPolyartCharacterPrefab;
-            case "sample_hero": return references.sampleHeroPrefab;
             default: return null;
         }
     }

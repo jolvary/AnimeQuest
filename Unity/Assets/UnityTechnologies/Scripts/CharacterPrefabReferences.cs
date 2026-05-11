@@ -11,5 +11,4 @@ public class CharacterPrefabReferences : ScriptableObject
     public GameObject sciFiHpCharacterPrefab;
     public GameObject sciFiPbrCharacterPrefab;
     public GameObject sciFiPolyartCharacterPrefab;
-    public GameObject sampleHeroPrefab;
 }

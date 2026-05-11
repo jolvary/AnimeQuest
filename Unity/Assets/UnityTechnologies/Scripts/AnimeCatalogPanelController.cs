@@ -565,7 +565,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         dropdown.targetGraphic = image;
         dropdown.options = BuildStatusOptions();
         dropdown.captionText = CreateDropdownText(dropdownObj.transform, "Label", new Vector2(10f, 0f), new Vector2(-42f, 0f), TextAnchor.MiddleLeft, Color.black);
-        var arrowText = CreateDropdownText(dropdownObj.transform, "Arrow", new Vector2(-30f, 0f), new Vector2(-2f, 0f), TextAnchor.MiddleCenter, Color.black);
+        var arrowText = CreateDropdownArrowText(dropdownObj.transform);
         arrowText.text = "v";
         CreateDropdownTemplate(dropdown);
 
@@ -615,7 +615,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         dropdown.targetGraphic = image;
         dropdown.options = BuildScoreOptions();
         dropdown.captionText = CreateDropdownText(dropdownObj.transform, "Label", new Vector2(10f, 0f), new Vector2(-42f, 0f), TextAnchor.MiddleLeft, Color.black);
-        var arrowText = CreateDropdownText(dropdownObj.transform, "Arrow", new Vector2(-30f, 0f), new Vector2(-2f, 0f), TextAnchor.MiddleCenter, Color.black);
+        var arrowText = CreateDropdownArrowText(dropdownObj.transform);
         arrowText.text = "v";
         CreateDropdownTemplate(dropdown);
 
@@ -796,6 +796,28 @@ public class AnimeCatalogPanelController : MonoBehaviour
         text.fontSize = 13;
         text.alignment = alignment;
         text.color = color;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        return text;
+    }
+
+    private Text CreateDropdownArrowText(Transform parent)
+    {
+        var textObj = new GameObject("Arrow", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        textObj.transform.SetParent(parent, false);
+
+        var rect = textObj.GetComponent<RectTransform>();
+        rect.anchorMin = new Vector2(1f, 0f);
+        rect.anchorMax = new Vector2(1f, 1f);
+        rect.pivot = new Vector2(1f, 0.5f);
+        rect.sizeDelta = new Vector2(28f, 0f);
+        rect.anchoredPosition = new Vector2(-8f, 0f);
+
+        var text = textObj.GetComponent<Text>();
+        text.font = ResolveFont();
+        text.fontSize = 13;
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = Color.black;
         text.horizontalOverflow = HorizontalWrapMode.Wrap;
         text.verticalOverflow = VerticalWrapMode.Truncate;
         return text;

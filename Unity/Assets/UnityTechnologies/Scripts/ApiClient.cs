@@ -224,17 +224,6 @@ public class ApiClient : MonoBehaviour
         return req.downloadHandler.text;
     }
 
-    public async Task<string> AcceptQuest(string code)
-    {
-        var req = CreateRequest($"{baseUrl}/api/quests/{code}/accept", UnityWebRequest.kHttpVerbPOST, "{}");
-        await req.SendWebRequest();
-
-        if (req.result != UnityWebRequest.Result.Success)
-            throw new Exception(req.error + " | " + req.downloadHandler.text);
-
-        return req.downloadHandler.text;
-    }
-
     public async Task<string> ClaimQuest(string code)
     {
         var req = CreateRequest($"{baseUrl}/api/quests/{UnityWebRequest.EscapeURL(code)}/claim", UnityWebRequest.kHttpVerbPOST, "{}");

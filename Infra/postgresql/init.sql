@@ -123,8 +123,17 @@ ON CONFLICT (provider, provider_id) DO NOTHING;
 INSERT INTO quests (code, title, description, requirements, rewards) VALUES
   ('watch_5_eps', 'Warm-up Marathon', 'Watch five anime episodes this week.', '{"episodes":5}'::jsonb, '{"xp":50,"coins":100,"character":"robot_blue"}'::jsonb),
   ('rate_3_titles', 'Critic Apprentice', 'Rate three different anime titles.', '{"ratings":3}'::jsonb, '{"xp":40,"item":"review_badge","character":"robot_green"}'::jsonb),
-  ('complete_series', 'Finale Hunter', 'Complete one anime series.', '{"completed_series":1}'::jsonb, '{"xp":100,"coins":250,"character":"ghost_character"}'::jsonb)
-ON CONFLICT (code) DO UPDATE SET rewards = EXCLUDED.rewards;
+  ('complete_series', 'Finale Hunter', 'Complete one anime series.', '{"completed_series":1}'::jsonb, '{"xp":100,"coins":250,"character":"ghost_character"}'::jsonb),
+  ('watch_12_eps', 'Season Sprint', 'Watch twelve anime episodes.', '{"episodes":12}'::jsonb, '{"xp":90,"coins":160}'::jsonb),
+  ('watch_24_eps', 'Binge Legend', 'Watch twenty-four anime episodes.', '{"episodes":24}'::jsonb, '{"xp":160,"coins":320}'::jsonb),
+  ('rate_5_titles', 'Sharp-Eyed Critic', 'Rate five different anime titles.', '{"ratings":5}'::jsonb, '{"xp":90,"coins":140,"item":"critic_pin"}'::jsonb),
+  ('complete_3_series', 'Completionist Path', 'Complete three anime series.', '{"completed_series":3}'::jsonb, '{"xp":220,"coins":500}'::jsonb),
+  ('balanced_fan', 'Balanced Fan', 'Watch, rate, and finish anime to prove a rounded profile.', '{"episodes":10,"ratings":2,"completed_series":1}'::jsonb, '{"xp":150,"coins":250,"item":"balanced_badge"}'::jsonb)
+ON CONFLICT (code) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  requirements = EXCLUDED.requirements,
+  rewards = EXCLUDED.rewards;
 
 INSERT INTO watch_entries (user_id, anime_id, status, score, episodes_watched, updated_at)
 SELECT

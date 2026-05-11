@@ -103,15 +103,6 @@ internal static class CharacterPrefabReferencesEditorBinding
             new[] { "PolyartCharacter" },
             new[] { "Assets/SciFiWarriorPBRHPPolyart", "Assets" });
 
-        references.sampleHeroPrefab = LoadPrefab("sampleHero", references.sampleHeroPrefab,
-            new[]
-            {
-                "Assets/RPG Tiny Hero Duo/Prefab/FemaleCharacterPolyart.prefab",
-                "Assets/RPG Tiny Hero Duo/Prefab/FemaleCharacterPBR.prefab"
-            },
-            new[] { "FemaleCharacterPolyart", "FemaleCharacterPBR" },
-            new[] { "Assets/RPG Tiny Hero Duo", "Assets" });
-
         EditorUtility.SetDirty(references);
         AssetDatabase.SaveAssets();
         Debug.Log($"[AnimeQuest] Character prefab references rebound; reason={reason}; {Describe(references)}");
@@ -190,8 +181,7 @@ internal static class CharacterPrefabReferencesEditorBinding
             $"robotHero={Name(references.robotHeroPrefab)}",
             $"sciFiHp={Name(references.sciFiHpCharacterPrefab)}",
             $"sciFiPbr={Name(references.sciFiPbrCharacterPrefab)}",
-            $"sciFiPolyart={Name(references.sciFiPolyartCharacterPrefab)}",
-            $"sampleHero={Name(references.sampleHeroPrefab)}");
+            $"sciFiPolyart={Name(references.sciFiPolyartCharacterPrefab)}");
     }
 
     private static string Name(UnityEngine.Object value)

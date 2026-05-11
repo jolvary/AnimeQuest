@@ -1060,42 +1060,6 @@ export function buildServer(ctx: AppContext) {
     };
   });
 
-  app.post("/api/quests/:code/accept", async (req, reply) => {
-    const userId = req.userId!;
-    const params = req.params as { code: string };
-    const code = params.code;
-
-    const quest = await ctx.prisma.quest.findUnique({
-      where: { code },
-    });
-
-    if (!quest) {
-      return reply.code(404).send({ error: "Quest not found" });
-    }
-
-    await ctx.prisma.userQuest.upsert({
-      where: {
-        userId_questId: {
-          userId,
-          questId: quest.questId,
-        },
-      },
-      update: {
-        status: "active",
-        updatedAt: new Date(),
-      },
-      create: {
-        userId,
-        questId: quest.questId,
-        status: "active",
-        progress: {},
-      },
-    });
-    req.log.info({ userId, code }, "[Dozzle][DB] quest accepted upsert");
-
-    return { ok: true };
-  });
-
   const ALLOWED_TABLES = new Set([
     "anime",
     "quests",

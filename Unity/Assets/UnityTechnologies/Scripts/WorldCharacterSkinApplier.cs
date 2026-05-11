@@ -881,12 +881,11 @@ public static class CharacterPrefabCatalog
             case "skeleton": return _references.skeletonPrefab;
             case "tiny_hero":
             case "tiny_hero_male": return _references.tinyHeroMalePbrPrefab != null ? _references.tinyHeroMalePbrPrefab : _references.tinyHeroPrefab;
-            case "tiny_hero_female": return _references.tinyHeroFemalePbrPrefab != null ? _references.tinyHeroFemalePbrPrefab : _references.sampleHeroPrefab;
+            case "tiny_hero_female": return _references.tinyHeroFemalePbrPrefab != null ? _references.tinyHeroFemalePbrPrefab : _references.tinyHeroPrefab;
             case "robot_hero": return _references.robotHeroPrefab;
             case "scifi_hp_character": return _references.sciFiHpCharacterPrefab;
             case "scifi_pbr_character": return _references.sciFiPbrCharacterPrefab;
             case "scifi_polyart_character": return _references.sciFiPolyartCharacterPrefab;
-            case "sample_hero": return _references.sampleHeroPrefab;
             default: return null;
         }
     }
@@ -904,7 +903,6 @@ public static class CharacterPrefabCatalog
             case "scifi_hp_character": return "HPCharacter";
             case "scifi_pbr_character": return "PBRCharacter";
             case "scifi_polyart_character": return "PolyartCharacter";
-            case "sample_hero": return "CharacterPackSample";
             default: return key;
         }
     }
@@ -996,8 +994,6 @@ public static class CharacterPrefabCatalog
             case "tiny_hero_female":
                 return AssetDatabase.LoadAssetAtPath<GameObject>("Assets/RPG Tiny Hero Duo/Prefab/FemaleCharacterPBR.prefab")
                     ?? AssetDatabase.LoadAssetAtPath<GameObject>("Assets/RPG Tiny Hero Duo/Prefab/FemaleCharacterPolyart.prefab");
-            case "sample_hero":
-                return AssetDatabase.LoadAssetAtPath<GameObject>("Assets/RPG Tiny Hero Duo/Prefab/FemaleCharacterPolyart.prefab");
             case "skeleton":
                 return FindPrefabBySearch("Skeleton", new[] { "Assets/SazenGames/Skeleton", "Assets" });
             case "robot_hero":

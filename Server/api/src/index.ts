@@ -51,6 +51,14 @@ type CharacterDefinition = {
   assetStoreUrl?: string;
 };
 
+type QuestSeedDefinition = {
+  code: string;
+  title: string;
+  description: string;
+  requirements: Record<string, number>;
+  rewards: Record<string, number | string>;
+};
+
 type ActiveSessionLease = {
   clientId: string;
   userId: string;
@@ -187,14 +195,64 @@ const CHARACTER_CATALOG: CharacterDefinition[] = [
     prefabSlot: 'PolyartCharacter',
     unlockLevel: 10,
   },
+];
+
+const QUEST_CATALOG: QuestSeedDefinition[] = [
   {
-    key: 'sample_hero',
-    displayName: 'Sample Hero',
-    description: 'Prefab slot for the free character pack sample asset.',
-    kind: 'prefab_slot',
-    prefabSlot: 'CharacterPackSample',
-    unlockLevel: 7,
-    assetStoreUrl: 'https://assetstore.unity.com/packages/3d/characters/humanoids/character-pack-free-sample-79870',
+    code: 'watch_5_eps',
+    title: 'Warm-up Marathon',
+    description: 'Watch five anime episodes this week.',
+    requirements: { episodes: 5 },
+    rewards: { xp: 50, coins: 100, character: 'robot_blue' },
+  },
+  {
+    code: 'rate_3_titles',
+    title: 'Critic Apprentice',
+    description: 'Rate three different anime titles.',
+    requirements: { ratings: 3 },
+    rewards: { xp: 40, item: 'review_badge', character: 'robot_green' },
+  },
+  {
+    code: 'complete_series',
+    title: 'Finale Hunter',
+    description: 'Complete one anime series.',
+    requirements: { completed_series: 1 },
+    rewards: { xp: 100, coins: 250, character: 'ghost_character' },
+  },
+  {
+    code: 'watch_12_eps',
+    title: 'Season Sprint',
+    description: 'Watch twelve anime episodes.',
+    requirements: { episodes: 12 },
+    rewards: { xp: 90, coins: 160 },
+  },
+  {
+    code: 'watch_24_eps',
+    title: 'Binge Legend',
+    description: 'Watch twenty-four anime episodes.',
+    requirements: { episodes: 24 },
+    rewards: { xp: 160, coins: 320 },
+  },
+  {
+    code: 'rate_5_titles',
+    title: 'Sharp-Eyed Critic',
+    description: 'Rate five different anime titles.',
+    requirements: { ratings: 5 },
+    rewards: { xp: 90, coins: 140, item: 'critic_pin' },
+  },
+  {
+    code: 'complete_3_series',
+    title: 'Completionist Path',
+    description: 'Complete three anime series.',
+    requirements: { completed_series: 3 },
+    rewards: { xp: 220, coins: 500 },
+  },
+  {
+    code: 'balanced_fan',
+    title: 'Balanced Fan',
+    description: 'Watch, rate, and finish anime to prove a rounded profile.',
+    requirements: { episodes: 10, ratings: 2, completed_series: 1 },
+    rewards: { xp: 150, coins: 250, item: 'balanced_badge' },
   },
 ];
 
@@ -470,6 +528,21 @@ async function ensureAppSchema(prisma: PrismaClient) {
   await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS unlocked_characters TEXT[] NOT NULL DEFAULT ARRAY['robot_kyle']`);
   await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS selected_character_key TEXT NOT NULL DEFAULT 'robot_kyle'`);
   await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS robot_color TEXT NOT NULL DEFAULT 'default'`);
+}
+
+async function seedQuestCatalog(prisma: PrismaClient) {
+  for (const quest of QUEST_CATALOG) {
+    await prisma.quest.upsert({
+      where: { code: quest.code },
+      update: {
+        title: quest.title,
+        description: quest.description,
+        requirements: quest.requirements,
+        rewards: quest.rewards,
+      },
+      create: quest,
+    });
+  }
 }
 
 function registerClientLogIntake(app: ReturnType<typeof buildServer>) {
@@ -984,6 +1057,7 @@ async function main() {
   const nakamaServerKey = mustGet('NAKAMA_SERVER_KEY');
 
   await ensureAppSchema(prisma);
+  await seedQuestCatalog(prisma);
 
   const app = buildServer({
     prisma,

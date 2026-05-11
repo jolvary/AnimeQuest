@@ -21,4 +21,3 @@ MonoBehaviour:
   sciFiHpCharacterPrefab: {fileID: 7673487251499248760, guid: c98043d57e0190845b790d7b92990bee, type: 3}
   sciFiPbrCharacterPrefab: {fileID: 2836004475591695743, guid: f432554f564e69242897607d34218939, type: 3}
   sciFiPolyartCharacterPrefab: {fileID: 7072444061591711186, guid: 910177ec26b76c14996c2d53627a6def, type: 3}
-  sampleHeroPrefab: {fileID: 1328023254706044480, guid: 257c304c754d3b247a51ef5bea7a90d0, type: 3}

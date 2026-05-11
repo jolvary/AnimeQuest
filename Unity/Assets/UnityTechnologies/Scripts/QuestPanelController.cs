@@ -74,20 +74,6 @@ public class QuestPanelController : MonoBehaviour
         RefreshQuests();
     }
 
-    public async void AcceptQuest(string questCode)
-    {
-        try
-        {
-            string json = await ApiClient.Instance.AcceptQuest(questCode);
-            DozzleLogger.Action("Quest accepted", json);
-            RefreshQuests();
-        }
-        catch (Exception ex)
-        {
-            DozzleLogger.Error("Failed to accept quest", ex);
-        }
-    }
-
     public async void ClaimQuest(string questCode)
     {
         try
@@ -242,8 +228,15 @@ public class QuestPanelController : MonoBehaviour
         }
         else
         {
-            CreateQuestButton(cardObj.transform, "Accept", () => AcceptQuest(item.code), true);
+            CreateQuestStatusLabel(cardObj.transform, "In progress");
         }
+    }
+
+    private void CreateQuestStatusLabel(Transform parent, string label)
+    {
+        var text = CreateRowLabel(parent, label, 14, FontStyle.Bold, 28f);
+        text.alignment = TextAnchor.MiddleCenter;
+        text.color = new Color(0.23f, 0.18f, 0.10f, 0.86f);
     }
 
     private void CreateProgressBar(Transform parent, float progress)
