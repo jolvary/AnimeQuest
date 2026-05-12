@@ -44,7 +44,7 @@ public class UIManager : MonoBehaviour
     public bool forceMobileControlsInEditor;
 
     private bool _isUiInteractionEnabled;
-    private GameObject _panelToolbar;
+    private GameObject _panelWheelRoot;
     private Button _chatToolbarButton;
     private GameObject _chatNotificationBadge;
     private Text _chatNotificationBadgeText;
@@ -88,7 +88,7 @@ public class UIManager : MonoBehaviour
         ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
-        EnsurePanelToolbar();
+        EnsurePanelWheel();
         EnsureMobileControls();
         EnsureWebGlPointerLockOverlay();
         EnsureErrorAlert();
@@ -111,7 +111,7 @@ public class UIManager : MonoBehaviour
         if (Keyboard.current.lKey.wasPressedThisFrame) OpenAnimePanel();
         if (Keyboard.current.uKey.wasPressedThisFrame) OpenUserCatalogPanel();
         if (Keyboard.current.nKey.wasPressedThisFrame) OpenMatchingPanel();
-        if (Keyboard.current.tKey.wasPressedThisFrame) OpenTablePanel("all");
+        if (Keyboard.current.tabKey.wasPressedThisFrame) TogglePanelWheel();
     }
 
     public bool HasAnyPanelOpen()
@@ -152,6 +152,23 @@ public class UIManager : MonoBehaviour
     {
         ToggleExclusive(tablePanel);
         tableViewerPanelController?.OpenTable(tableName);
+    }
+
+    public void OpenCharactersPanel()
+    {
+        if (tablePanel == null) return;
+
+        var characterController = tablePanel.GetComponent<CharacterPanelController>();
+        if (characterController == null)
+        {
+            characterController = tablePanel.AddComponent<CharacterPanelController>();
+        }
+
+        characterController.ConfigureFont(panelTitleFont);
+        HideAll();
+        tablePanel.SetActive(true);
+        RefreshCursorState();
+        characterController.RefreshCharacters();
     }
 
     public void OpenChatPanel()
@@ -216,6 +233,7 @@ public class UIManager : MonoBehaviour
         if (userCatalogPanel) userCatalogPanel.SetActive(false);
         if (matchingPanel) matchingPanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
+        HidePanelWheel();
 
         RefreshCursorState();
     }
@@ -496,81 +514,143 @@ public class UIManager : MonoBehaviour
         });
     }
 
-    private void EnsurePanelToolbar()
+    private void EnsurePanelWheel()
     {
-        if (_panelToolbar != null) return;
+        if (_panelWheelRoot != null) return;
 
         Transform parent = ResolvePanelParent();
-        _panelToolbar = new GameObject("PanelIconToolbar", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(VerticalLayoutGroup));
-        _panelToolbar.transform.SetParent(parent != null ? parent : transform, false);
+        _panelWheelRoot = new GameObject("PanelWheel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        _panelWheelRoot.transform.SetParent(parent != null ? parent : transform, false);
+        _panelWheelRoot.transform.SetAsLastSibling();
 
-        var rect = _panelToolbar.GetComponent<RectTransform>();
-        rect.anchorMin = new Vector2(0f, 0.5f);
-        rect.anchorMax = new Vector2(0f, 0.5f);
-        rect.pivot = new Vector2(0f, 0.5f);
-        rect.anchoredPosition = new Vector2(20f, 0f);
-        rect.sizeDelta = new Vector2(58f, 490f);
+        var rootRect = _panelWheelRoot.GetComponent<RectTransform>();
+        rootRect.anchorMin = Vector2.zero;
+        rootRect.anchorMax = Vector2.one;
+        rootRect.offsetMin = Vector2.zero;
+        rootRect.offsetMax = Vector2.zero;
 
-        var image = _panelToolbar.GetComponent<Image>();
-        image.color = new Color(0.16f, 0.09f, 0.03f, 0.22f);
-        image.raycastTarget = false;
+        var rootImage = _panelWheelRoot.GetComponent<Image>();
+        rootImage.color = new Color(0f, 0f, 0f, 0.34f);
 
-        var layout = _panelToolbar.GetComponent<VerticalLayoutGroup>();
-        layout.padding = new RectOffset(4, 4, 6, 6);
-        layout.spacing = 8f;
-        layout.childAlignment = TextAnchor.UpperCenter;
-        layout.childControlWidth = true;
-        layout.childControlHeight = false;
-        layout.childForceExpandWidth = true;
-        layout.childForceExpandHeight = false;
+        var rootButton = _panelWheelRoot.GetComponent<Button>();
+        rootButton.transition = Selectable.Transition.None;
+        rootButton.onClick.AddListener(HidePanelWheel);
 
-        CreatePanelIconButton("Icon_AnimeCatalog", "A", OpenAnimePanel);
-        CreatePanelIconButton("Icon_UserCatalog", "U", OpenUserCatalogPanel);
-        CreatePanelIconButton("Icon_Quests", "Q", OpenQuestsPanel);
-        CreatePanelIconButton("Icon_Friends", "F", OpenFriendsPanel);
-        _chatToolbarButton = CreatePanelIconButton("Icon_Chat", "C", OpenChatPanel);
+        var hub = new GameObject("WheelHub", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        hub.transform.SetParent(_panelWheelRoot.transform, false);
+        var hubRect = hub.GetComponent<RectTransform>();
+        hubRect.anchorMin = new Vector2(0.5f, 0.5f);
+        hubRect.anchorMax = new Vector2(0.5f, 0.5f);
+        hubRect.pivot = new Vector2(0.5f, 0.5f);
+        hubRect.anchoredPosition = Vector2.zero;
+        hubRect.sizeDelta = new Vector2(190f, 190f);
+        hub.GetComponent<Image>().color = new Color(0.16f, 0.09f, 0.03f, 0.78f);
+
+        var title = new GameObject("Title", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        title.transform.SetParent(hub.transform, false);
+        var titleRect = title.GetComponent<RectTransform>();
+        titleRect.anchorMin = Vector2.zero;
+        titleRect.anchorMax = Vector2.one;
+        titleRect.offsetMin = new Vector2(14f, 14f);
+        titleRect.offsetMax = new Vector2(-14f, -14f);
+
+        var titleText = title.GetComponent<Text>();
+        titleText.text = "Panels";
+        titleText.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        titleText.alignment = TextAnchor.MiddleCenter;
+        titleText.fontSize = 28;
+        titleText.fontStyle = FontStyle.Bold;
+        titleText.color = Color.white;
+        titleText.raycastTarget = false;
+
+        const float radius = 222f;
+        CreateWheelButton("Wheel_Anime", "Anime", 90f, radius, OpenAnimePanel);
+        CreateWheelButton("Wheel_UserCatalog", "My List", 39f, radius, OpenUserCatalogPanel);
+        CreateWheelButton("Wheel_Quests", "Quests", -13f, radius, OpenQuestsPanel);
+        CreateWheelButton("Wheel_Friends", "Friends", -64f, radius, OpenFriendsPanel);
+        _chatToolbarButton = CreateWheelButton("Wheel_Chat", "Chat", -116f, radius, OpenChatPanel);
+        CreateWheelButton("Wheel_Matching", "Matches", -167f, radius, OpenMatchingPanel);
+        CreateWheelButton("Wheel_Characters", "Chars", 141f, radius, OpenCharactersPanel);
         EnsureChatNotificationBadge();
         RefreshChatNotificationBadge();
-        CreatePanelIconButton("Icon_Matching", "M", OpenMatchingPanel);
-        CreatePanelIconButton("Icon_Tables", "T", () => OpenTablePanel("all"));
+
+        _panelWheelRoot.SetActive(false);
     }
 
-    private Button CreatePanelIconButton(string name, string label, Action onClick)
+    private Button CreateWheelButton(string name, string label, float angleDegrees, float radius, Action onClick)
     {
-        var buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
-        buttonObject.transform.SetParent(_panelToolbar.transform, false);
+        var buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        buttonObject.transform.SetParent(_panelWheelRoot.transform, false);
 
+        float radians = angleDegrees * Mathf.Deg2Rad;
         var rect = buttonObject.GetComponent<RectTransform>();
-        rect.sizeDelta = new Vector2(50f, 50f);
-
-        var layout = buttonObject.GetComponent<LayoutElement>();
-        layout.preferredHeight = 50f;
-        layout.minHeight = 50f;
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = new Vector2(Mathf.Cos(radians) * radius, Mathf.Sin(radians) * radius);
+        rect.sizeDelta = new Vector2(126f, 58f);
 
         var image = buttonObject.GetComponent<Image>();
-        image.color = new Color(0.48f, 0.28f, 0.12f, 0.86f);
+        image.color = new Color(0.48f, 0.28f, 0.12f, 0.94f);
 
         var button = buttonObject.GetComponent<Button>();
-        button.onClick.AddListener(() => onClick?.Invoke());
+        button.onClick.AddListener(() =>
+        {
+            HidePanelWheel(refreshCursor: false);
+            onClick?.Invoke();
+        });
 
         var labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
         labelObject.transform.SetParent(buttonObject.transform, false);
         var labelRect = labelObject.GetComponent<RectTransform>();
         labelRect.anchorMin = Vector2.zero;
         labelRect.anchorMax = Vector2.one;
-        labelRect.offsetMin = Vector2.zero;
-        labelRect.offsetMax = Vector2.zero;
+        labelRect.offsetMin = new Vector2(6f, 2f);
+        labelRect.offsetMax = new Vector2(-6f, -2f);
 
         var text = labelObject.GetComponent<Text>();
         text.text = label;
         text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
         text.alignment = TextAnchor.MiddleCenter;
-        text.fontSize = 26;
+        text.fontSize = 19;
         text.fontStyle = FontStyle.Bold;
         text.color = Color.white;
         text.raycastTarget = false;
 
         return button;
+    }
+
+    private void TogglePanelWheel()
+    {
+        EnsurePanelWheel();
+        bool shouldOpen = _panelWheelRoot != null && !_panelWheelRoot.activeSelf;
+        HideAll();
+        if (shouldOpen && _panelWheelRoot != null)
+        {
+            _panelWheelRoot.SetActive(true);
+        }
+
+        RefreshCursorState();
+    }
+
+    private void HidePanelWheel()
+    {
+        HidePanelWheel(refreshCursor: true);
+    }
+
+    private void HidePanelWheel(bool refreshCursor)
+    {
+        if (_panelWheelRoot == null || !_panelWheelRoot.activeSelf) return;
+        _panelWheelRoot.SetActive(false);
+        if (refreshCursor)
+        {
+            RefreshCursorState();
+        }
+    }
+
+    private bool IsPanelWheelOpen()
+    {
+        return _panelWheelRoot != null && _panelWheelRoot.activeSelf;
     }
 
     private void QueueChatNotification(string channelKey)
@@ -1009,11 +1089,6 @@ public class UIManager : MonoBehaviour
 
     private void RefreshOverlayVisibility(bool anyPanelOpen, bool mainMenuOpen)
     {
-        if (_panelToolbar != null)
-        {
-            _panelToolbar.SetActive(!mainMenuOpen && !anyPanelOpen);
-        }
-
         if (_mobileControls != null)
         {
             _mobileControls.SetActive(ShouldUseMobileControls() && !mainMenuOpen && !anyPanelOpen);
@@ -1066,7 +1141,8 @@ public class UIManager : MonoBehaviour
                (animePanel && animePanel.activeSelf) ||
                (userCatalogPanel && userCatalogPanel.activeSelf) ||
                (matchingPanel && matchingPanel.activeSelf) ||
-               (tablePanel && tablePanel.activeSelf);
+               (tablePanel && tablePanel.activeSelf) ||
+               IsPanelWheelOpen();
     }
 
     private static bool IsTextInputFocused()
