@@ -21,6 +21,13 @@ public class PlayerInteractor : MonoBehaviour
 
     private void Awake()
     {
+        ResolvePromptText();
+        SetPrompt(false, "");
+    }
+
+    private void OnEnable()
+    {
+        ResolvePromptText();
         SetPrompt(false, "");
     }
 
@@ -124,6 +131,7 @@ public class PlayerInteractor : MonoBehaviour
 
     private void SetPrompt(bool visible, string text)
     {
+        ResolvePromptText();
         if (promptText == null) return;
 
         promptText.enabled = visible;
@@ -134,6 +142,25 @@ public class PlayerInteractor : MonoBehaviour
 #else
             promptText.text = $"{text} (E)";
 #endif
+        }
+        else
+        {
+            promptText.text = string.Empty;
+        }
+    }
+
+    private void ResolvePromptText()
+    {
+        if (promptText != null) return;
+
+        var texts = FindObjectsByType<TextMeshProUGUI>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        foreach (var text in texts)
+        {
+            if (text != null && text.name == "PromptText")
+            {
+                promptText = text;
+                return;
+            }
         }
     }
 }
