@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Nakama;
@@ -18,6 +19,26 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
     private static readonly Color InputColor = new Color(0.96f, 0.90f, 0.78f, 0.36f);
     private static readonly Color PrimaryButtonColor = new Color(0.23f, 0.77f, 0.27f, 1f);
     private static readonly Color SecondaryButtonColor = new Color(0.48f, 0.28f, 0.12f, 0.86f);
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [DllImport("__Internal")]
+    private static extern int AnimeQuestWatch_IsSupported();
+
+    [DllImport("__Internal")]
+    private static extern void AnimeQuestWatch_Load(string url, string provider, string sourceId);
+
+    [DllImport("__Internal")]
+    private static extern void AnimeQuestWatch_Play();
+
+    [DllImport("__Internal")]
+    private static extern void AnimeQuestWatch_Pause();
+
+    [DllImport("__Internal")]
+    private static extern void AnimeQuestWatch_Seek(float seconds);
+
+    [DllImport("__Internal")]
+    private static extern void AnimeQuestWatch_Close();
+#endif
 
     public Font preferredFont;
     public string defaultRoomName = "animequest-watch";
@@ -38,6 +59,7 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
     private Button _pauseButton;
     private Button _seekBackButton;
     private Button _seekForwardButton;
+    private Button _embedButton;
     private Button _openLinkButton;
     private Button _sendNoteButton;
     private ScrollRect _resultsScrollRect;
@@ -55,6 +77,7 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
     private bool _isSending;
     private int _joinGeneration;
     private float _stateReceivedAt;
+    private string _embeddedSourceKey;
     private WatchPartyPayload _state = new WatchPartyPayload
     {
         type = "watch_party",
@@ -82,8 +105,14 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         RefreshInteractableState();
     }
 
+    private void OnDisable()
+    {
+        CloseEmbeddedPlayer();
+    }
+
     private void OnDestroy()
     {
+        CloseEmbeddedPlayer();
         UnsubscribeFromSocket();
     }
 
@@ -327,6 +356,7 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         _state.action = action;
         _state.episode = ClampEpisode(ReadEpisodeInput(), _state.totalEpisodes);
         _state.watchUrl = _linkInput != null ? _linkInput.text.Trim() : string.Empty;
+        ApplySourceInfoToState(DetectSource(_state.watchUrl), _state);
         _state.positionSeconds = CurrentPositionSeconds();
         if (!keepPlayingState)
         {
@@ -434,8 +464,43 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
             return;
         }
 
-        Application.OpenURL(url);
+        var source = DetectSource(url);
+        Application.OpenURL(string.IsNullOrWhiteSpace(source.url) ? url : source.url);
         AddEventRow("System", "Opened watch link.");
+    }
+
+    private void OpenEmbeddedPlayer()
+    {
+        string url = _linkInput != null ? _linkInput.text.Trim() : _state.watchUrl;
+        var source = DetectSource(url);
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            SetStatus("Add a watch link first.");
+            return;
+        }
+
+        if (!source.canEmbed)
+        {
+            SetStatus(source.displayName == "Crunchyroll" ? "Crunchyroll opens in companion mode." : "This source opens externally.");
+            Application.OpenURL(string.IsNullOrWhiteSpace(source.url) ? url : source.url);
+            AddEventRow("System", $"Opened {source.displayName} externally.");
+            return;
+        }
+
+        _state.watchUrl = url;
+        ApplySourceInfoToState(source, _state);
+        _state.positionSeconds = CurrentPositionSeconds();
+        _stateReceivedAt = Time.unscaledTime;
+
+        if (TrySyncEmbeddedPlayer(_state, forceLoad: true))
+        {
+            SetStatus($"{source.displayName} player opened.");
+            AddEventRow("System", $"Opened embedded {source.displayName} player.");
+        }
+        else
+        {
+            SetStatus("Embedded playback is available in WebGL builds.");
+        }
     }
 
     private void SubscribeToSocket()
@@ -506,6 +571,11 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
             _state.room = string.IsNullOrWhiteSpace(payload.room) ? _activeRoomName : payload.room;
             _state.episode = ClampEpisode(payload.episode, payload.totalEpisodes);
             _state.positionSeconds = Mathf.Max(0f, payload.positionSeconds);
+            if (string.IsNullOrWhiteSpace(_state.provider) && !string.IsNullOrWhiteSpace(_state.watchUrl))
+            {
+                ApplySourceInfoToState(DetectSource(_state.watchUrl), _state);
+            }
+
             _stateReceivedAt = Time.unscaledTime;
 
             if (_episodeInput != null) _episodeInput.text = _state.episode.ToString();
@@ -516,6 +586,7 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
 
             RefreshSelectionText();
             RefreshPlaybackText();
+            TrySyncEmbeddedPlayer(_state, forceLoad: false);
         }
 
         AddEventRow(DisplaySender(payload, source), FormatEvent(payload));
@@ -534,6 +605,9 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
             totalEpisodes = _state.totalEpisodes,
             episode = _state.episode,
             watchUrl = _state.watchUrl,
+            provider = _state.provider,
+            sourceId = _state.sourceId,
+            embedded = _state.embedded,
             playing = _state.playing,
             positionSeconds = _state.positionSeconds,
             sentAtUnixMs = _state.sentAtUnixMs,
@@ -549,6 +623,225 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         float basePosition = Mathf.Max(0f, _state.positionSeconds);
         if (!_state.playing) return basePosition;
         return basePosition + Mathf.Max(0f, Time.unscaledTime - _stateReceivedAt);
+    }
+
+    private bool TrySyncEmbeddedPlayer(WatchPartyPayload state, bool forceLoad)
+    {
+        if (state == null || string.IsNullOrWhiteSpace(state.watchUrl)) return false;
+
+        var source = DetectSource(state.watchUrl);
+        if (!source.canEmbed) return false;
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        if (AnimeQuestWatch_IsSupported() == 0) return false;
+
+        string key = $"{source.provider}:{source.sourceId}:{source.url}";
+        if (forceLoad || !string.Equals(_embeddedSourceKey, key, StringComparison.Ordinal))
+        {
+            AnimeQuestWatch_Load(source.url, source.provider, source.sourceId);
+            _embeddedSourceKey = key;
+        }
+
+        AnimeQuestWatch_Seek(Mathf.Max(0f, state.positionSeconds));
+        if (state.playing)
+        {
+            AnimeQuestWatch_Play();
+        }
+        else
+        {
+            AnimeQuestWatch_Pause();
+        }
+
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    private void CloseEmbeddedPlayer()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        AnimeQuestWatch_Close();
+#endif
+        _embeddedSourceKey = null;
+    }
+
+    private static void ApplySourceInfoToState(WatchSourceInfo source, WatchPartyPayload payload)
+    {
+        if (payload == null) return;
+        payload.provider = source.provider;
+        payload.sourceId = source.sourceId;
+        payload.embedded = source.canEmbed;
+    }
+
+    private static WatchSourceInfo DetectSource(string rawUrl)
+    {
+        var info = new WatchSourceInfo
+        {
+            provider = "external",
+            displayName = string.IsNullOrWhiteSpace(rawUrl) ? "No source" : "External",
+            sourceId = string.Empty,
+            url = string.IsNullOrWhiteSpace(rawUrl) ? string.Empty : rawUrl.Trim(),
+            canEmbed = false
+        };
+
+        if (string.IsNullOrWhiteSpace(rawUrl)) return info;
+
+        if (!TryCreateUri(rawUrl.Trim(), out var uri, out string normalizedUrl))
+        {
+            return info;
+        }
+
+        info.url = normalizedUrl;
+        string host = uri.Host.ToLowerInvariant();
+        string path = uri.AbsolutePath ?? string.Empty;
+
+        if (host.IndexOf("crunchyroll.com", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            info.provider = "crunchyroll";
+            info.displayName = "Crunchyroll";
+            return info;
+        }
+
+        if (host.IndexOf("youtube.com", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            host.IndexOf("youtu.be", StringComparison.OrdinalIgnoreCase) >= 0 ||
+            host.IndexOf("youtube-nocookie.com", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            string videoId = ExtractYouTubeId(uri);
+            info.provider = "youtube";
+            info.displayName = "YouTube";
+            info.sourceId = videoId;
+            info.canEmbed = !string.IsNullOrWhiteSpace(videoId);
+            return info;
+        }
+
+        if (host.IndexOf("vimeo.com", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            string videoId = ExtractVimeoId(uri);
+            info.provider = "vimeo";
+            info.displayName = "Vimeo";
+            info.sourceId = videoId;
+            info.canEmbed = !string.IsNullOrWhiteSpace(videoId);
+            return info;
+        }
+
+        if (IsDirectVideoPath(path))
+        {
+            info.provider = "direct";
+            info.displayName = "Direct video";
+            info.sourceId = normalizedUrl;
+            info.canEmbed = true;
+            return info;
+        }
+
+        return info;
+    }
+
+    private static bool TryCreateUri(string rawUrl, out Uri uri, out string normalizedUrl)
+    {
+        uri = null;
+        normalizedUrl = rawUrl;
+        if (Uri.TryCreate(rawUrl, UriKind.Absolute, out uri))
+        {
+            normalizedUrl = uri.ToString();
+            return true;
+        }
+
+        string withScheme = "https://" + rawUrl.TrimStart('/');
+        if (Uri.TryCreate(withScheme, UriKind.Absolute, out uri))
+        {
+            normalizedUrl = uri.ToString();
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string ExtractYouTubeId(Uri uri)
+    {
+        string host = uri.Host.ToLowerInvariant();
+        string[] segments = uri.AbsolutePath.Trim('/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (host.IndexOf("youtu.be", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            return segments.Length > 0 ? CleanVideoId(segments[0]) : string.Empty;
+        }
+
+        string queryVideoId = GetQueryValue(uri.Query, "v");
+        if (!string.IsNullOrWhiteSpace(queryVideoId)) return CleanVideoId(queryVideoId);
+
+        if (segments.Length >= 2 &&
+            (string.Equals(segments[0], "embed", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(segments[0], "shorts", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(segments[0], "live", StringComparison.OrdinalIgnoreCase)))
+        {
+            return CleanVideoId(segments[1]);
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractVimeoId(Uri uri)
+    {
+        string[] segments = uri.AbsolutePath.Trim('/').Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+        for (int i = segments.Length - 1; i >= 0; i--)
+        {
+            string candidate = CleanVideoId(segments[i]);
+            if (string.IsNullOrWhiteSpace(candidate)) continue;
+
+            bool allDigits = true;
+            for (int j = 0; j < candidate.Length; j++)
+            {
+                if (!char.IsDigit(candidate[j]))
+                {
+                    allDigits = false;
+                    break;
+                }
+            }
+
+            if (allDigits) return candidate;
+        }
+
+        return string.Empty;
+    }
+
+    private static string GetQueryValue(string query, string key)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+        string trimmed = query.TrimStart('?');
+        string[] pairs = trimmed.Split('&');
+        foreach (string pair in pairs)
+        {
+            int separator = pair.IndexOf('=');
+            if (separator <= 0) continue;
+
+            string pairKey = Uri.UnescapeDataString(pair.Substring(0, separator));
+            if (!string.Equals(pairKey, key, StringComparison.OrdinalIgnoreCase)) continue;
+
+            return Uri.UnescapeDataString(pair.Substring(separator + 1));
+        }
+
+        return string.Empty;
+    }
+
+    private static string CleanVideoId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        string cleaned = value.Trim();
+        int separator = cleaned.IndexOfAny(new[] { '?', '&', '#', '/' });
+        if (separator >= 0) cleaned = cleaned.Substring(0, separator);
+        return cleaned.Trim();
+    }
+
+    private static bool IsDirectVideoPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+        string lowerPath = path.ToLowerInvariant();
+        return lowerPath.EndsWith(".mp4", StringComparison.Ordinal) ||
+               lowerPath.EndsWith(".webm", StringComparison.Ordinal) ||
+               lowerPath.EndsWith(".ogg", StringComparison.Ordinal) ||
+               lowerPath.EndsWith(".ogv", StringComparison.Ordinal) ||
+               lowerPath.EndsWith(".m3u8", StringComparison.Ordinal);
     }
 
     private int ReadEpisodeInput()
@@ -663,13 +956,22 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
 
         if (_linkInput == null)
         {
-            _linkInput = CreateInput("WatchLinkInput", transform, "Legal watch link or source URL", new Vector2(0.46f, 1f), new Vector2(1f, 1f), new Vector2(22f, -362f), new Vector2(-180f, -318f), 16);
-            _linkInput.onValueChanged.AddListener(_ => RefreshInteractableState());
+            _linkInput = CreateInput("WatchLinkInput", transform, "YouTube, Vimeo, direct video, or Crunchyroll URL", new Vector2(0.46f, 1f), new Vector2(1f, 1f), new Vector2(22f, -362f), new Vector2(-306f, -318f), 16);
+            _linkInput.onValueChanged.AddListener(_ =>
+            {
+                RefreshPlaybackText();
+                RefreshInteractableState();
+            });
+        }
+
+        if (_embedButton == null)
+        {
+            _embedButton = CreateButton("EmbedWatchLinkButton", transform, "Embed", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-294f, -362f), new Vector2(-178f, -318f), 18, PrimaryButtonColor, OpenEmbeddedPlayer);
         }
 
         if (_openLinkButton == null)
         {
-            _openLinkButton = CreateButton("OpenWatchLinkButton", transform, "Open", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-168f, -362f), new Vector2(-48f, -318f), 18, SecondaryButtonColor, OpenWatchLink);
+            _openLinkButton = CreateButton("OpenWatchLinkButton", transform, "Open", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-166f, -362f), new Vector2(-48f, -318f), 18, SecondaryButtonColor, OpenWatchLink);
         }
 
         if (_eventsScrollRect == null || _eventsContent == null)
@@ -954,7 +1256,9 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         string stateText = _state != null && _state.playing ? "Playing" : "Paused";
         string positionText = FormatTime(CurrentPositionSeconds());
         string roomText = string.IsNullOrWhiteSpace(_activeRoomName) ? NormalizeRoomName(defaultRoomName) : _activeRoomName;
-        _playbackText.text = $"{stateText} at {positionText} | Room: {roomText}";
+        var source = DetectSource(_linkInput != null ? _linkInput.text : _state?.watchUrl);
+        string sourceText = string.IsNullOrWhiteSpace(source.displayName) ? "No source" : source.displayName;
+        _playbackText.text = $"{stateText} at {positionText} | Room: {roomText} | Source: {sourceText}";
     }
 
     private void RefreshInteractableState()
@@ -970,7 +1274,10 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         if (_pauseButton != null) _pauseButton.interactable = canSend;
         if (_seekBackButton != null) _seekBackButton.interactable = canSend;
         if (_seekForwardButton != null) _seekForwardButton.interactable = canSend;
-        if (_openLinkButton != null) _openLinkButton.interactable = !string.IsNullOrWhiteSpace(_linkInput != null ? _linkInput.text : _state?.watchUrl);
+        string sourceUrl = _linkInput != null ? _linkInput.text : _state?.watchUrl;
+        var source = DetectSource(sourceUrl);
+        if (_embedButton != null) _embedButton.interactable = source.canEmbed;
+        if (_openLinkButton != null) _openLinkButton.interactable = !string.IsNullOrWhiteSpace(sourceUrl);
         if (_sendNoteButton != null) _sendNoteButton.interactable = canSend;
     }
 
@@ -1145,12 +1452,24 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         public int totalEpisodes;
         public int episode;
         public string watchUrl;
+        public string provider;
+        public string sourceId;
+        public bool embedded;
         public bool playing;
         public float positionSeconds;
         public long sentAtUnixMs;
         public string senderId;
         public string senderName;
         public string note;
+    }
+
+    private class WatchSourceInfo
+    {
+        public string provider;
+        public string displayName;
+        public string sourceId;
+        public string url;
+        public bool canEmbed;
     }
 
     [Serializable]
