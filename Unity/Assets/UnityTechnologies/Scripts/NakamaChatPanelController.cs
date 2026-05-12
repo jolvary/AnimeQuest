@@ -560,7 +560,7 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
-        if (IsWorldStateMessage(message.Content))
+        if (IsWorldStateMessage(message.Content) || IsWatchPartyMessage(message.Content))
         {
             return;
         }
@@ -648,6 +648,22 @@ public class NakamaChatPanelController : MonoBehaviour
         catch
         {
             return rawContent.IndexOf("\"type\":\"world_state\"", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+    }
+
+    private static bool IsWatchPartyMessage(string rawContent)
+    {
+        if (string.IsNullOrWhiteSpace(rawContent)) return false;
+        if (rawContent.IndexOf("watch_party", StringComparison.OrdinalIgnoreCase) < 0) return false;
+
+        try
+        {
+            var probe = JsonUtility.FromJson<WatchPartyProbe>(rawContent);
+            return probe != null && string.Equals(probe.type, "watch_party", StringComparison.Ordinal);
+        }
+        catch
+        {
+            return rawContent.IndexOf("\"type\":\"watch_party\"", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 
@@ -1114,6 +1130,12 @@ public class NakamaChatPanelController : MonoBehaviour
 
     [Serializable]
     private class WorldStateProbe
+    {
+        public string type;
+    }
+
+    [Serializable]
+    private class WatchPartyProbe
     {
         public string type;
     }
