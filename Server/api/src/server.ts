@@ -1,4 +1,4 @@
-import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
@@ -92,6 +92,8 @@ type MalOauthState = {
   codeVerifier: string;
 };
 
+type SwaggerRouteSchema = Record<string, unknown>;
+
 const WATCH_STATUSES = ["watching", "completed", "planned", "dropped", "on_hold"] as const;
 type WatchStatus = (typeof WATCH_STATUSES)[number];
 
@@ -100,6 +102,473 @@ const MAL_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_MAL_EXPIRES_IN_SECONDS = 60 * 60;
 const DEFAULT_ANIME_LIMIT = 100;
 const MAX_ANIME_LIMIT = 500;
+
+const stringOrNullSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
+const integerOrNullSchema = { anyOf: [{ type: "integer" }, { type: "null" }] };
+const jsonObjectSchema = { type: "object", additionalProperties: true };
+const okResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+  },
+};
+const errorResponseSchema = {
+  type: "object",
+  properties: {
+    error: { type: "string" },
+  },
+};
+const paginationQuerySchema = {
+  type: "object",
+  properties: {
+    q: { type: "string", description: "Texto de búsqueda por título." },
+    limit: { type: "integer", minimum: 1, maximum: MAX_ANIME_LIMIT, default: DEFAULT_ANIME_LIMIT },
+    offset: { type: "integer", minimum: 0, default: 0 },
+  },
+};
+const idParamsSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Identificador interno del anime." },
+  },
+};
+const codeParamsSchema = {
+  type: "object",
+  properties: {
+    code: { type: "string", description: "Código de la misión." },
+  },
+};
+const animeItemSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    briefDescription: { type: "string" },
+    description: { type: "string" },
+    imageUrl: { type: "string" },
+    episodes: integerOrNullSchema,
+    releaseDate: { type: "string" },
+    isWatching: { type: "boolean" },
+    watchStatus: stringOrNullSchema,
+    score: integerOrNullSchema,
+    episodesWatched: { type: "integer" },
+    lists: { type: "array", items: { type: "string" } },
+    genres: { type: "array", items: { type: "string" } },
+    trailerYoutubeId: stringOrNullSchema,
+    provider: { type: "string" },
+    providerId: { type: "string" },
+  },
+  additionalProperties: true,
+};
+const animeListResponseSchema = {
+  type: "object",
+  properties: {
+    items: { type: "array", items: animeItemSchema },
+    limit: { type: "integer" },
+    offset: { type: "integer" },
+    hasMore: { type: "boolean" },
+  },
+};
+const watchStateResponseSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    isWatching: { type: "boolean" },
+    watchStatus: stringOrNullSchema,
+    score: integerOrNullSchema,
+    episodesWatched: { type: "integer" },
+    lists: { type: "array", items: { type: "string" } },
+  },
+};
+const playerStateResponseSchema = {
+  type: "object",
+  properties: {
+    hasPosition: { type: "boolean" },
+    x: { type: "number" },
+    y: { type: "number" },
+    z: { type: "number" },
+    rotationY: { type: "number" },
+    updatedAt: stringOrNullSchema,
+  },
+};
+const characterResponseSchema = {
+  type: "object",
+  properties: {
+    profile: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        displayName: { type: "string" },
+        experiencePoints: { type: "integer" },
+        level: { type: "integer" },
+        coins: { type: "integer" },
+        selectedCharacterKey: { type: "string" },
+        robotColor: { type: "string" },
+      },
+      additionalProperties: true,
+    },
+    characters: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          displayName: { type: "string" },
+          description: { type: "string" },
+          kind: { type: "string" },
+          unlocked: { type: "boolean" },
+          selected: { type: "boolean" },
+        },
+        additionalProperties: true,
+      },
+    },
+  },
+  additionalProperties: true,
+};
+const sessionLeaseBodySchema = {
+  type: "object",
+  properties: {
+    clientId: { type: "string", minLength: 16, maxLength: 128 },
+    platform: { type: "string" },
+    unityVersion: { type: "string" },
+  },
+};
+const bearerSecurity = [{ bearerAuth: [] }];
+
+const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
+  "GET /health": {
+    tags: ["Sistema"],
+    summary: "Comprueba que la API está levantada.",
+    response: { 200: okResponseSchema },
+  },
+  "GET /": {
+    tags: ["Sistema", "MyAnimeList"],
+    summary: "Raíz de la API y callback alternativo OAuth de MyAnimeList.",
+    querystring: {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        state: { type: "string" },
+      },
+    },
+    response: { 200: jsonObjectSchema },
+  },
+  "POST /client/logs": {
+    tags: ["Cliente Unity"],
+    summary: "Recibe logs y eventos enviados desde Unity para Dozzle.",
+    body: {
+      type: "object",
+      properties: {
+        level: { type: "string" },
+        action: { type: "string" },
+        details: { type: "string" },
+        message: { type: "string" },
+        timestamp: { type: "string" },
+        platform: { type: "string" },
+        unityVersion: { type: "string" },
+      },
+    },
+    response: { 200: okResponseSchema },
+  },
+  "GET /client/image": {
+    tags: ["Cliente Unity"],
+    summary: "Proxy seguro para cargar carátulas e imágenes desde Unity.",
+    querystring: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL http/https de una imagen permitida." },
+      },
+    },
+    response: {
+      400: errorResponseSchema,
+      403: errorResponseSchema,
+      415: errorResponseSchema,
+      502: errorResponseSchema,
+    },
+  },
+  "POST /client/session/acquire": {
+    tags: ["Sesión"],
+    summary: "Reserva una sesión activa para bloquear login duplicado.",
+    security: bearerSecurity,
+    body: sessionLeaseBodySchema,
+    response: {
+      200: { type: "object", properties: { ok: { type: "boolean" }, expiresInSeconds: { type: "integer" } } },
+      409: errorResponseSchema,
+    },
+  },
+  "POST /client/session/heartbeat": {
+    tags: ["Sesión"],
+    summary: "Renueva el lease de sesión activa.",
+    security: bearerSecurity,
+    body: sessionLeaseBodySchema,
+    response: { 200: { type: "object", properties: { ok: { type: "boolean" }, expiresInSeconds: { type: "integer" } } } },
+  },
+  "POST /client/session/release": {
+    tags: ["Sesión"],
+    summary: "Libera la sesión activa al cerrar sesión.",
+    security: bearerSecurity,
+    body: sessionLeaseBodySchema,
+    response: { 200: okResponseSchema },
+  },
+  "POST /api/me/ensure": {
+    tags: ["Usuario"],
+    summary: "Crea o sincroniza el perfil local a partir de la sesión Nakama.",
+    security: bearerSecurity,
+    response: { 200: { type: "object", properties: { id: { type: "string" }, displayName: { type: "string" } } } },
+  },
+  "GET /api/anime": {
+    tags: ["Anime"],
+    summary: "Lista el catálogo global de anime con estado del usuario.",
+    security: bearerSecurity,
+    querystring: paginationQuerySchema,
+    response: { 200: animeListResponseSchema },
+  },
+  "GET /api/anime/user": {
+    tags: ["Anime"],
+    summary: "Lista el catálogo personal del usuario autenticado.",
+    security: bearerSecurity,
+    querystring: paginationQuerySchema,
+    response: { 200: animeListResponseSchema },
+  },
+  "GET /api/anime/matches": {
+    tags: ["Anime", "Social"],
+    summary: "Devuelve coincidencias de anime con otros usuarios.",
+    security: bearerSecurity,
+    querystring: paginationQuerySchema,
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          items: { type: "array", items: animeItemSchema },
+        },
+      },
+    },
+  },
+  "PATCH /api/anime/:id/watching": {
+    tags: ["Anime", "CRUD"],
+    summary: "Marca o desmarca un anime como viendo.",
+    security: bearerSecurity,
+    params: idParamsSchema,
+    body: { type: "object", properties: { isWatching: { type: "boolean" } } },
+    response: { 200: watchStateResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema },
+  },
+  "PATCH /api/anime/:id/lists": {
+    tags: ["Anime", "CRUD"],
+    summary: "Añade o elimina un anime de listas de seguimiento.",
+    security: bearerSecurity,
+    params: idParamsSchema,
+    body: {
+      type: "object",
+      properties: {
+        add: { type: "array", items: { type: "string" } },
+        remove: { type: "array", items: { type: "string" } },
+      },
+    },
+    response: { 200: watchStateResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema },
+  },
+  "PATCH /api/anime/:id/progress": {
+    tags: ["Anime", "CRUD"],
+    summary: "Actualiza progreso, estado y puntuación de un anime.",
+    security: bearerSecurity,
+    params: idParamsSchema,
+    body: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: WATCH_STATUSES },
+        score: { type: "integer", minimum: 0, maximum: 10 },
+        episodesWatched: { type: "integer", minimum: 0 },
+      },
+    },
+    response: { 200: watchStateResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema },
+  },
+  "GET /api/player/state": {
+    tags: ["Jugador"],
+    summary: "Carga la última posición persistida del jugador.",
+    security: bearerSecurity,
+    response: { 200: playerStateResponseSchema },
+  },
+  "PATCH /api/player/state": {
+    tags: ["Jugador", "CRUD"],
+    summary: "Guarda posición y rotación del jugador.",
+    security: bearerSecurity,
+    body: {
+      type: "object",
+      properties: {
+        x: { type: "number" },
+        y: { type: "number" },
+        z: { type: "number" },
+        rotationY: { type: "number" },
+      },
+    },
+    response: { 200: playerStateResponseSchema, 400: errorResponseSchema },
+  },
+  "GET /api/characters": {
+    tags: ["Personajes"],
+    summary: "Devuelve catálogo de personajes y desbloqueos del usuario.",
+    security: bearerSecurity,
+    response: { 200: characterResponseSchema },
+  },
+  "POST /api/characters/select": {
+    tags: ["Personajes", "CRUD"],
+    summary: "Selecciona un personaje desbloqueado.",
+    security: bearerSecurity,
+    body: {
+      type: "object",
+      properties: {
+        characterKey: { type: "string" },
+        robotColor: { type: "string" },
+      },
+    },
+    response: { 200: characterResponseSchema, 403: errorResponseSchema },
+  },
+  "GET /api/mal/oauth/start": {
+    tags: ["MyAnimeList"],
+    summary: "Genera la URL de autorización OAuth de MyAnimeList.",
+    security: bearerSecurity,
+    response: { 200: { type: "object", properties: { url: { type: "string" } } }, 500: errorResponseSchema },
+  },
+  "GET /api/mal/oauth/callback": {
+    tags: ["MyAnimeList"],
+    summary: "Recibe el callback OAuth de MyAnimeList.",
+    querystring: {
+      type: "object",
+      properties: {
+        code: { type: "string" },
+        state: { type: "string" },
+      },
+    },
+    response: { 200: jsonObjectSchema, 400: errorResponseSchema },
+  },
+  "GET /api/mal/oauth/status": {
+    tags: ["MyAnimeList"],
+    summary: "Consulta si la cuenta está vinculada a MyAnimeList.",
+    security: bearerSecurity,
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          configured: { type: "boolean" },
+          linked: { type: "boolean" },
+          malUsername: stringOrNullSchema,
+          reconnectRequired: { type: "boolean" },
+        },
+      },
+    },
+  },
+  "POST /api/mal/oauth/refresh": {
+    tags: ["MyAnimeList"],
+    summary: "Refresca o valida el token OAuth de MyAnimeList.",
+    security: bearerSecurity,
+    response: { 200: okResponseSchema, 401: errorResponseSchema },
+  },
+  "POST /api/mal/import": {
+    tags: ["MyAnimeList"],
+    summary: "Importa la lista personal de MyAnimeList al catálogo local.",
+    security: bearerSecurity,
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          imported: { type: "integer" },
+          statusCounts: jsonObjectSchema,
+          rawStatusCounts: jsonObjectSchema,
+          scoredEntries: { type: "integer" },
+          episodeProgressEntries: { type: "integer" },
+        },
+      },
+      401: errorResponseSchema,
+      502: errorResponseSchema,
+    },
+  },
+  "GET /api/quests": {
+    tags: ["Misiones"],
+    summary: "Lista el catálogo de misiones.",
+    security: bearerSecurity,
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                code: { type: "string" },
+                title: { type: "string" },
+                description: { type: "string" },
+                requirements: jsonObjectSchema,
+                rewards: jsonObjectSchema,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  "POST /api/quests/:code/claim": {
+    tags: ["Misiones", "CRUD"],
+    summary: "Reclama una misión completada y aplica recompensas.",
+    security: bearerSecurity,
+    params: codeParamsSchema,
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          alreadyCompleted: { type: "boolean" },
+          progressPercent: { type: "number" },
+          rewards: {
+            type: "object",
+            properties: {
+              xp: { type: "integer" },
+              coins: { type: "integer" },
+              character: stringOrNullSchema,
+            },
+          },
+          characterProgression: characterResponseSchema,
+        },
+      },
+      400: errorResponseSchema,
+      404: errorResponseSchema,
+    },
+  },
+  "GET /api/table/:name": {
+    tags: ["Base de datos", "CRUD"],
+    summary: "Consulta filas de una tabla permitida para depuración.",
+    security: bearerSecurity,
+    params: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          enum: ["anime", "quests", "users", "watch_entries", "user_quests", "achievements", "user_achievements"],
+        },
+      },
+    },
+    querystring: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+        offset: { type: "integer", minimum: 0, default: 0 },
+      },
+    },
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          table: { type: "string" },
+          columns: { type: "array", items: { type: "string" } },
+          rows: { type: "array", items: jsonObjectSchema },
+          limit: { type: "integer" },
+          offset: { type: "integer" },
+        },
+      },
+      403: errorResponseSchema,
+    },
+  },
+};
 
 type AnimeDeckItem = {
   id: string;
@@ -469,6 +938,108 @@ async function syncTopAnimeCatalog(ctx: AppContext, maxPages?: number) {
 
   return { pages, upserted };
 }
+
+function registerSwaggerRouteSchemas(app: FastifyInstance) {
+  app.addHook("onRoute", (routeOptions) => {
+    const methods = Array.isArray(routeOptions.method) ? routeOptions.method : [routeOptions.method];
+    for (const method of methods) {
+      const schema = swaggerRouteSchemas[`${method.toUpperCase()} ${routeOptions.url}`];
+      if (schema) {
+        (routeOptions as { schema?: unknown }).schema = schema;
+        return;
+      }
+    }
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function schemaProperties(schema: unknown): Record<string, unknown> {
+  if (!isRecord(schema) || !isRecord(schema.properties)) return {};
+  return schema.properties;
+}
+
+function schemaRequiredFields(schema: unknown): string[] {
+  if (!isRecord(schema) || !Array.isArray(schema.required)) return [];
+  return schema.required.filter((item): item is string => typeof item === "string");
+}
+
+function fastifyPathToOpenApiPath(path: string) {
+  return path.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+}
+
+function buildOpenApiParameters(schema: unknown, location: "path" | "query") {
+  const requiredFields = schemaRequiredFields(schema);
+  return Object.entries(schemaProperties(schema)).map(([name, propertySchema]) => ({
+    name,
+    in: location,
+    required: location === "path" || requiredFields.includes(name),
+    schema: propertySchema,
+    description: isRecord(propertySchema) && typeof propertySchema.description === "string" ? propertySchema.description : undefined,
+  }));
+}
+
+function buildOpenApiResponses(schema: SwaggerRouteSchema) {
+  const rawResponses = isRecord(schema.response) ? schema.response : { 200: okResponseSchema };
+  return Object.fromEntries(
+    Object.entries(rawResponses).map(([statusCode, responseSchema]) => [
+      statusCode,
+      {
+        description: statusCode.startsWith("2") ? "Respuesta correcta" : "Respuesta de error",
+        content: {
+          "application/json": {
+            schema: responseSchema,
+          },
+        },
+      },
+    ])
+  );
+}
+
+function buildDocumentedOpenApiPaths() {
+  const paths: Record<string, Record<string, unknown>> = {};
+
+  for (const [routeKey, schema] of Object.entries(swaggerRouteSchemas)) {
+    const [method, ...pathParts] = routeKey.split(" ");
+    const openApiPath = fastifyPathToOpenApiPath(pathParts.join(" "));
+    const operation: Record<string, unknown> = {
+      tags: schema.tags,
+      summary: schema.summary,
+      description: schema.description,
+      security: schema.security,
+      responses: buildOpenApiResponses(schema),
+    };
+
+    const parameters = [
+      ...buildOpenApiParameters(schema.params, "path"),
+      ...buildOpenApiParameters(schema.querystring, "query"),
+    ];
+    if (parameters.length > 0) {
+      operation.parameters = parameters;
+    }
+
+    if (schema.body) {
+      operation.requestBody = {
+        required: false,
+        content: {
+          "application/json": {
+            schema: schema.body,
+          },
+        },
+      };
+    }
+
+    paths[openApiPath] = {
+      ...(paths[openApiPath] ?? {}),
+      [method.toLowerCase()]: operation,
+    };
+  }
+
+  return paths;
+}
+
 export function buildServer(ctx: AppContext) {
   const app = Fastify({
     logger: true,
@@ -477,6 +1048,8 @@ export function buildServer(ctx: AppContext) {
         typeof value === "bigint" ? value.toString() : value,
     },
   });
+
+  registerSwaggerRouteSchemas(app);
 
   app.register(cors, { origin: true });
 
@@ -488,10 +1061,56 @@ export function buildServer(ctx: AppContext) {
 
   app.register(swagger, {
     openapi: {
+      openapi: "3.0.3",
       info: {
         title: "AnimeQuest API",
+        description: "API REST usada por el cliente Unity de AnimeQuest: catálogo, listas, progreso, MyAnimeList, misiones, personajes, sesión y herramientas de depuración.",
         version: "0.1.0",
       },
+      servers: [
+        {
+          url: "http://localhost:3000",
+          description: "Entorno local Docker",
+        },
+      ],
+      tags: [
+        { name: "Sistema", description: "Estado de la API y raíz del servicio." },
+        { name: "Cliente Unity", description: "Endpoints auxiliares usados por el cliente Unity." },
+        { name: "Sesión", description: "Control de sesión activa y bloqueo de login duplicado." },
+        { name: "Usuario", description: "Sincronización del perfil local con Nakama." },
+        { name: "Anime", description: "Catálogo, listas personales, matching y progreso." },
+        { name: "MyAnimeList", description: "OAuth, refresco e importación de listas MAL." },
+        { name: "Misiones", description: "Catálogo, progreso y reclamación de recompensas." },
+        { name: "Personajes", description: "Catálogo de personajes, desbloqueos y selección." },
+        { name: "Jugador", description: "Persistencia de posición y estado del jugador." },
+        { name: "Base de datos", description: "Lectura controlada de tablas permitidas." },
+        { name: "CRUD", description: "Operaciones Create, Read, Update y Delete/cierre persistidas." },
+      ],
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "Nakama session token",
+            description: "Token de sesión devuelto por Nakama. Usar en la cabecera Authorization: Bearer <token>.",
+          },
+        },
+      },
+    },
+    transformObject: (documentObject) => {
+      if (!("openapiObject" in documentObject)) {
+        return documentObject.swaggerObject;
+      }
+
+      const { openapiObject } = documentObject;
+      if (Object.keys(openapiObject.paths ?? {}).length > 0) {
+        return openapiObject;
+      }
+
+      return {
+        ...openapiObject,
+        paths: buildDocumentedOpenApiPaths(),
+      };
     },
   });
 
