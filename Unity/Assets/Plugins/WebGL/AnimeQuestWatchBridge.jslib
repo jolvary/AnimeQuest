@@ -72,6 +72,7 @@ mergeInto(LibraryManager.library, {
       root.style.boxShadow = "0 18px 48px rgba(0,0,0,0.45)";
       root.style.zIndex = "2147483000";
       root.style.overflow = "hidden";
+      root.style.pointerEvents = "none";
 
       var close = document.createElement("button");
       close.type = "button";
@@ -88,6 +89,7 @@ mergeInto(LibraryManager.library, {
       close.style.font = "700 18px sans-serif";
       close.style.cursor = "pointer";
       close.style.zIndex = "2";
+      close.style.pointerEvents = "auto";
       close.onclick = this.close.bind(this);
       root.appendChild(close);
 
@@ -102,6 +104,7 @@ mergeInto(LibraryManager.library, {
       element.style.width = "100%";
       element.style.height = "100%";
       element.style.border = "0";
+      element.style.pointerEvents = "none";
     },
 
     clearPlayer: function () {

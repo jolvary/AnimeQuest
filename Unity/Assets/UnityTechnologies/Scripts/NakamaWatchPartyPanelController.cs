@@ -364,7 +364,16 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         }
 
         _stateReceivedAt = Time.unscaledTime;
-        await SendPayload(CloneStateForSend());
+        var payload = CloneStateForSend();
+        if (_channel == null && payload.embedded)
+        {
+            ApplyPayload(payload, "local");
+            SetStatus("Controlling embedded player locally. Join a watch room to sync.");
+            RefreshInteractableState();
+            return;
+        }
+
+        await SendPayload(payload);
     }
 
     private async void SendNote()
@@ -501,6 +510,8 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
         {
             SetStatus("Embedded playback is available in WebGL builds.");
         }
+
+        RefreshInteractableState();
     }
 
     private void SubscribeToSocket()
@@ -1265,18 +1276,19 @@ public class NakamaWatchPartyPanelController : MonoBehaviour
     {
         bool connected = _channel != null && !_isJoining;
         bool busy = _isSearching || _isSending || _isJoining;
+        string sourceUrl = _linkInput != null ? _linkInput.text : _state?.watchUrl;
+        var source = DetectSource(sourceUrl);
         bool canSend = connected && !busy;
+        bool canControlPlayback = !busy && (connected || source.canEmbed);
 
         if (_joinButton != null) _joinButton.interactable = !_isJoining;
         if (_searchButton != null) _searchButton.interactable = !_isSearching;
         if (_shareButton != null) _shareButton.interactable = canSend;
-        if (_playButton != null) _playButton.interactable = canSend;
-        if (_pauseButton != null) _pauseButton.interactable = canSend;
-        if (_seekBackButton != null) _seekBackButton.interactable = canSend;
-        if (_seekForwardButton != null) _seekForwardButton.interactable = canSend;
-        string sourceUrl = _linkInput != null ? _linkInput.text : _state?.watchUrl;
-        var source = DetectSource(sourceUrl);
-        if (_embedButton != null) _embedButton.interactable = source.canEmbed;
+        if (_playButton != null) _playButton.interactable = canControlPlayback;
+        if (_pauseButton != null) _pauseButton.interactable = canControlPlayback;
+        if (_seekBackButton != null) _seekBackButton.interactable = canControlPlayback;
+        if (_seekForwardButton != null) _seekForwardButton.interactable = canControlPlayback;
+        if (_embedButton != null) _embedButton.interactable = source.canEmbed && !busy;
         if (_openLinkButton != null) _openLinkButton.interactable = !string.IsNullOrWhiteSpace(sourceUrl);
         if (_sendNoteButton != null) _sendNoteButton.interactable = canSend;
     }
