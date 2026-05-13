@@ -2,7 +2,7 @@ import 'dotenv/config';
 import Redis from 'ioredis';
 import { PrismaClient } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { buildServer } from './server';
+import { buildServer, syncTopAnimeCatalog, type AppContext } from './server';
 import { fetchNakamaAccount } from './nakama';
 
 type ClientLogBody = {
@@ -285,6 +285,41 @@ function optionalBool(name: string, fallback: boolean): boolean {
   if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
   if (['0', 'false', 'no', 'off'].includes(raw)) return false;
   return fallback;
+}
+
+async function runStartupCatalogSync(ctx: AppContext) {
+  if (!ctx.env.MAL_CLIENT_ID || !ctx.env.MAL_CATALOG_SYNC_ON_START || !ctx.catalogSync) return;
+
+  ctx.catalogSync.startupStartedAt = new Date().toISOString();
+  console.log(
+    `MAL catalog startup sync started (maxPages=${ctx.env.MAL_CATALOG_SYNC_MAX_PAGES ?? 'all'}, required=${ctx.env.MAL_CATALOG_SYNC_REQUIRED})`
+  );
+
+  try {
+    const result = await syncTopAnimeCatalog(ctx, ctx.env.MAL_CATALOG_SYNC_MAX_PAGES, (progress) => {
+      ctx.catalogSync!.pages = progress.event === 'page' ? progress.page : progress.page - 1;
+      ctx.catalogSync!.upserted = progress.upserted;
+      console.log(
+        `MAL catalog sync ${progress.event}: page=${progress.page}, offset=${progress.offset}, upserted=${progress.upserted}` +
+          (progress.pageCount == null ? '' : `, pageCount=${progress.pageCount}, hasNext=${progress.hasNext}`)
+      );
+    });
+    ctx.catalogSync.pages = result.pages;
+    ctx.catalogSync.upserted = result.upserted;
+    ctx.catalogSync.startupReady = true;
+    ctx.catalogSync.startupCompletedAt = new Date().toISOString();
+    console.log(`MAL catalog startup sync completed: pages=${result.pages}, upserted=${result.upserted}`);
+  } catch (error) {
+    ctx.catalogSync.startupError = error instanceof Error ? error.message : String(error);
+    ctx.catalogSync.startupCompletedAt = new Date().toISOString();
+    console.error('MAL catalog startup sync failed:', error);
+    if (ctx.env.MAL_CATALOG_SYNC_REQUIRED) {
+      process.exitCode = 1;
+      setTimeout(() => process.exit(1), 1000);
+    } else {
+      ctx.catalogSync.startupReady = true;
+    }
+  }
 }
 
 function compact(value: unknown, maxLength = 500): string | null {
@@ -1068,7 +1103,7 @@ async function main() {
   await ensureAppSchema(prisma);
   await seedQuestCatalog(prisma);
 
-  const app = buildServer({
+  const ctx: AppContext = {
     prisma,
     redis,
     env: {
@@ -1086,7 +1121,13 @@ async function main() {
       MAL_CATALOG_SYNC_ON_START: optionalBool('MAL_CATALOG_SYNC_ON_START', true),
       MAL_CATALOG_SYNC_REQUIRED: optionalBool('MAL_CATALOG_SYNC_REQUIRED', true),
     },
-  });
+    catalogSync: {
+      startupReady: false,
+    },
+  };
+  ctx.catalogSync!.startupReady = !ctx.env.MAL_CLIENT_ID || !ctx.env.MAL_CATALOG_SYNC_ON_START;
+
+  const app = buildServer(ctx);
 
   registerClientLogIntake(app);
   registerClientImageProxy(app);
@@ -1107,6 +1148,7 @@ async function main() {
   });
 
   console.log(`API listening on http://0.0.0.0:${port}`);
+  void runStartupCatalogSync(ctx);
 }
 
 main().catch((error) => {

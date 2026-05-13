@@ -51,6 +51,8 @@ const MAL_API_BASE = "https://api.myanimelist.net/v2";
 const MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
 const JIKAN_API_BASE = "https://api.jikan.moe/v4";
+const EXTERNAL_FETCH_TIMEOUT_MS = 20000;
+const EXTERNAL_FETCH_MAX_ATTEMPTS = 4;
 const ANIME_FIELDS = [
   "id",
   "title",
@@ -100,6 +102,54 @@ function authHeaders(clientId: string, accessToken?: string): Record<string, str
   const headers: Record<string, string> = { "X-MAL-CLIENT-ID": clientId };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   return headers;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryResponse(response: Response) {
+  return response.status === 429 || response.status >= 500;
+}
+
+function retryDelayMs(attempt: number, response?: Response) {
+  const retryAfter = response?.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number.parseFloat(retryAfter);
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(seconds * 1000, 30000);
+  }
+
+  return Math.min(1000 * attempt, 5000);
+}
+
+async function fetchWithRetry(url: string, init?: RequestInit) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= EXTERNAL_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), EXTERNAL_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      if (!shouldRetryResponse(response) || attempt === EXTERNAL_FETCH_MAX_ATTEMPTS) {
+        return response;
+      }
+
+      lastError = new Error(`External request failed with retryable status ${response.status}`);
+      console.warn(`External request retry ${attempt}/${EXTERNAL_FETCH_MAX_ATTEMPTS}: status=${response.status}; url=${url}`);
+      await sleep(retryDelayMs(attempt, response));
+    } catch (error) {
+      lastError = error;
+      if (attempt === EXTERNAL_FETCH_MAX_ATTEMPTS) break;
+
+      console.warn(`External request retry ${attempt}/${EXTERNAL_FETCH_MAX_ATTEMPTS}: error=${error instanceof Error ? error.message : String(error)}; url=${url}`);
+      await sleep(retryDelayMs(attempt));
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 function encodeMalUsernamePath(username: string) {
@@ -157,7 +207,7 @@ async function enrichAnimeEntries<T extends { node: MalAnimeNode }>(params: {
 
 export async function fetchTopAnimePage(params: { clientId: string; limit: number; offset: number }) {
   const url = `${MAL_API_BASE}/anime/ranking?ranking_type=all&limit=${params.limit}&offset=${params.offset}&fields=${encodeURIComponent(ANIME_FIELDS)}`;
-  const response = await fetch(url, { headers: authHeaders(params.clientId) });
+  const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId) });
   if (!response.ok) throw new Error(`MAL ranking request failed: ${response.status}`);
   const payload = (await response.json()) as { data: { node: MalAnimeNode }[]; paging?: { next?: string } };
   return {
@@ -168,14 +218,14 @@ export async function fetchTopAnimePage(params: { clientId: string; limit: numbe
 
 export async function fetchAnimeDetails(params: { clientId: string; animeId: number; accessToken?: string }) {
   const url = `${MAL_API_BASE}/anime/${params.animeId}?fields=${encodeURIComponent(ANIME_FIELDS)}`;
-  const response = await fetch(url, { headers: authHeaders(params.clientId, params.accessToken) });
+  const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId, params.accessToken) });
   if (!response.ok) throw new Error(`MAL anime detail request failed: ${response.status}`);
   return (await response.json()) as MalAnimeNode;
 }
 
 export async function fetchAnimeTrailerYoutubeId(params: { animeId: number }) {
   const videosUrl = `${JIKAN_API_BASE}/anime/${params.animeId}/videos`;
-  const videosResponse = await fetch(videosUrl, {
+  const videosResponse = await fetchWithRetry(videosUrl, {
     headers: { "user-agent": "AnimeQuest/0.1 trailer lookup" },
   });
 
@@ -189,7 +239,7 @@ export async function fetchAnimeTrailerYoutubeId(params: { animeId: number }) {
   }
 
   const fullUrl = `${JIKAN_API_BASE}/anime/${params.animeId}/full`;
-  const fullResponse = await fetch(fullUrl, {
+  const fullResponse = await fetchWithRetry(fullUrl, {
     headers: { "user-agent": "AnimeQuest/0.1 trailer lookup" },
   });
 
@@ -202,7 +252,7 @@ export async function fetchAnimeTrailerYoutubeId(params: { animeId: number }) {
 export async function fetchCurrentMalUser(params: { clientId: string; accessToken: string }) {
   const fields = ["id", "name"].join(",");
   const url = `${MAL_API_BASE}/users/@me?fields=${encodeURIComponent(fields)}`;
-  const response = await fetch(url, { headers: authHeaders(params.clientId, params.accessToken) });
+  const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId, params.accessToken) });
   if (!response.ok) throw new Error(`MAL current user request failed: ${response.status}`);
   return (await response.json()) as MalCurrentUser;
 }
@@ -211,7 +261,7 @@ export async function fetchUserAnimeList(params: { clientId: string; accessToken
   const fields = `${ANIME_FIELDS},list_status`;
   const usernamePath = encodeMalUsernamePath(params.username);
   const url = `${MAL_API_BASE}/users/${usernamePath}/animelist?limit=${params.limit}&offset=${params.offset}&fields=${encodeURIComponent(fields)}`;
-  const response = await fetch(url, { headers: authHeaders(params.clientId, params.accessToken) });
+  const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId, params.accessToken) });
   if (!response.ok) throw new Error(`MAL user list request failed: ${response.status}`);
   const payload = (await response.json()) as {
     data: { node: MalAnimeNode; list_status?: { status?: string; score?: number; num_episodes_watched?: number } }[];
@@ -257,7 +307,7 @@ export async function exchangeMalCodeForToken(params: {
     code_verifier: params.codeVerifier,
   });
 
-  const response = await fetch(MAL_TOKEN_URL, { method: "POST", body });
+  const response = await fetchWithRetry(MAL_TOKEN_URL, { method: "POST", body });
   if (!response.ok) throw new Error(`MAL token exchange failed: ${response.status}`);
   return response.json() as Promise<MalTokenResponse>;
 }
@@ -269,7 +319,7 @@ export async function refreshMalAccessToken(params: { clientId: string; clientSe
     grant_type: "refresh_token",
     refresh_token: params.refreshToken,
   });
-  const response = await fetch(MAL_TOKEN_URL, { method: "POST", body });
+  const response = await fetchWithRetry(MAL_TOKEN_URL, { method: "POST", body });
   if (!response.ok) throw new Error(`MAL token refresh failed: ${response.status}`);
   return response.json() as Promise<MalTokenResponse>;
 }

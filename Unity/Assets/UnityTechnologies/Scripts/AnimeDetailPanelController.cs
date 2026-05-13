@@ -72,7 +72,6 @@ public class AnimeDetailPanelController : MonoBehaviour
     private Text _synopsisText;
     private Text _platformStatusText;
     private Text _trailerLabelText;
-    private Text _syncStatusText;
     private RectTransform _platformContent;
     private AnimeDetailItem _currentAnime;
 
@@ -98,8 +97,6 @@ public class AnimeDetailPanelController : MonoBehaviour
 
     private async void RefreshDetails(string expectedId)
     {
-        SetSyncStatus("Loading trailer...");
-
         try
         {
             string json = await ApiClient.Instance.GetAnimeDetails(expectedId);
@@ -108,11 +105,9 @@ public class AnimeDetailPanelController : MonoBehaviour
 
             _currentAnime = item;
             Render(item);
-            SetSyncStatus(string.IsNullOrWhiteSpace(item.trailerYoutubeId) ? "Trailer unavailable." : string.Empty);
         }
         catch (Exception ex)
         {
-            SetSyncStatus("Trailer unavailable.");
             DozzleLogger.Error("Anime detail load failed", ex);
         }
     }
@@ -147,8 +142,8 @@ public class AnimeDetailPanelController : MonoBehaviour
             "Title",
             new Vector2(0f, 0.5f),
             new Vector2(1f, 0.5f),
-            new Vector2(24f, 4f),
-            new Vector2(-72f, 42f),
+            new Vector2(24f, -8f),
+            new Vector2(-72f, 30f),
             28,
             FontStyle.Bold,
             TextAnchor.MiddleLeft,
@@ -160,8 +155,8 @@ public class AnimeDetailPanelController : MonoBehaviour
             "Subtitle",
             new Vector2(0f, 0.5f),
             new Vector2(1f, 0.5f),
-            new Vector2(24f, -30f),
-            new Vector2(-72f, 0f),
+            new Vector2(24f, -42f),
+            new Vector2(-72f, -12f),
             17,
             FontStyle.Bold,
             TextAnchor.MiddleLeft,
@@ -306,8 +301,6 @@ public class AnimeDetailPanelController : MonoBehaviour
         scroll.vertical = true;
         scroll.viewport = viewportObj.GetComponent<RectTransform>();
         scroll.content = contentRect;
-
-        _syncStatusText = CreateAnchoredText(_root.transform, "SyncStatus", new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(292f, 4f), new Vector2(-20f, 26f), 13, FontStyle.Italic, TextAnchor.MiddleRight, MutedTextColor);
     }
 
     private void Render(AnimeDetailItem item)
@@ -405,12 +398,6 @@ public class AnimeDetailPanelController : MonoBehaviour
         }
 
         Application.OpenURL(BuildTrailerUrl(_currentAnime));
-    }
-
-    private void SetSyncStatus(string value)
-    {
-        if (_syncStatusText == null) return;
-        _syncStatusText.text = value ?? string.Empty;
     }
 
     private static string BuildSubtitle(AnimeDetailItem item)

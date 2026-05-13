@@ -39,6 +39,14 @@ export type AppContext = {
     MAL_CATALOG_SYNC_ON_START: boolean;
     MAL_CATALOG_SYNC_REQUIRED: boolean;
   };
+  catalogSync?: {
+    startupReady: boolean;
+    startupStartedAt?: string;
+    startupCompletedAt?: string;
+    startupError?: string;
+    pages?: number;
+    upserted?: number;
+  };
 };
 
 type TableRow = Record<string, unknown>;
@@ -96,6 +104,15 @@ type MalOauthState = {
   codeVerifier: string;
 };
 
+type CatalogSyncProgress = {
+  event: "fetching" | "page";
+  page: number;
+  offset: number;
+  pageCount?: number;
+  upserted: number;
+  hasNext?: boolean;
+};
+
 type SwaggerRouteSchema = Record<string, unknown>;
 
 const WATCH_STATUSES = ["watching", "completed", "planned", "dropped", "on_hold"] as const;
@@ -106,6 +123,9 @@ const MAL_TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const DEFAULT_MAL_EXPIRES_IN_SECONDS = 60 * 60;
 const DEFAULT_ANIME_LIMIT = 100;
 const MAX_ANIME_LIMIT = 500;
+const MAL_SCORE_CACHE_TTL_SECONDS = 24 * 60 * 60;
+const MAL_SCORE_NULL_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const MAL_SCORE_NULL_CACHE_VALUE = "null";
 
 const stringOrNullSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
 const integerOrNullSchema = { anyOf: [{ type: "integer" }, { type: "null" }] };
@@ -703,6 +723,43 @@ function animeUpsertData(node: MalAnimeNode) {
   };
 }
 
+function normalizeMalScore(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function malScoreCacheKey(malId: number) {
+  return `anime:mal-score:${malId}`;
+}
+
+function parseCachedMalScore(value: string | null) {
+  if (value == null) return { hit: false as const, score: null };
+  if (value === MAL_SCORE_NULL_CACHE_VALUE) return { hit: true as const, score: null };
+
+  const score = Number.parseFloat(value);
+  return Number.isFinite(score) ? { hit: true as const, score } : { hit: false as const, score: null };
+}
+
+async function readCachedMalScore(ctx: AppContext, malId: number) {
+  try {
+    return parseCachedMalScore(await ctx.redis.get(malScoreCacheKey(malId)));
+  } catch {
+    return { hit: false as const, score: null };
+  }
+}
+
+async function writeCachedMalScore(ctx: AppContext, malId: number, score: number | null) {
+  try {
+    if (score == null) {
+      await ctx.redis.setex(malScoreCacheKey(malId), MAL_SCORE_NULL_CACHE_TTL_SECONDS, MAL_SCORE_NULL_CACHE_VALUE);
+      return;
+    }
+
+    await ctx.redis.setex(malScoreCacheKey(malId), MAL_SCORE_CACHE_TTL_SECONDS, score.toString());
+  } catch {
+    // Redis is an optimization for MAL score lookups; do not fail the anime response if caching is unavailable.
+  }
+}
+
 function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | null, details?: { malScore?: number | null }): AnimeDeckItem {
   const watchStatus = normalizeWatchStatus(watch?.status ?? "");
 
@@ -762,13 +819,22 @@ async function hydrateAnimeExternalDetails(ctx: AppContext, row: AnimeDeckSource
     return { row: nextRow, malScore };
   }
 
+  const cachedScore = await readCachedMalScore(ctx, malId);
+  if (cachedScore.hit) {
+    malScore = cachedScore.score;
+    if (row.imageUrl) {
+      return { row: nextRow, malScore };
+    }
+  }
+
   try {
     const details = await fetchAnimeDetails({
       clientId: ctx.env.MAL_CLIENT_ID,
       animeId: malId,
     });
 
-    malScore = typeof details.mean === "number" && Number.isFinite(details.mean) ? details.mean : null;
+    malScore = normalizeMalScore(details.mean);
+    await writeCachedMalScore(ctx, malId, malScore);
     const imageUrl = details.main_picture?.large ?? details.main_picture?.medium ?? null;
 
     if (!row.imageUrl && imageUrl) {
@@ -793,6 +859,26 @@ function parseAnimeListQuery(query: { q?: string; limit?: string; offset?: strin
   const limit = Math.min(Math.max(requestedLimit, 1), MAX_ANIME_LIMIT);
   const offset = Math.max(requestedOffset, 0);
   return { q, limit, offset };
+}
+
+function isCatalogStartupPending(ctx: AppContext) {
+  return Boolean(ctx.env.MAL_CLIENT_ID && ctx.env.MAL_CATALOG_SYNC_ON_START && ctx.catalogSync && !ctx.catalogSync.startupReady);
+}
+
+function catalogSyncResponse(ctx: AppContext) {
+  const sync = ctx.catalogSync;
+  return {
+    status: sync?.startupError ? "failed" : sync?.startupReady ? "ready" : "syncing",
+    startedAt: sync?.startupStartedAt ?? null,
+    completedAt: sync?.startupCompletedAt ?? null,
+    pages: sync?.pages ?? null,
+    upserted: sync?.upserted ?? null,
+    error: sync?.startupError ?? null,
+  };
+}
+
+function shouldGateAnimeRead(ctx: AppContext, method: string, path: string) {
+  return method === "GET" && path.startsWith("/api/anime") && isCatalogStartupPending(ctx);
 }
 
 function incrementCount(counts: Record<string, number>, key: string) {
@@ -981,7 +1067,11 @@ async function getValidMalAccessToken(ctx: AppContext, userId: string) {
   }
 }
 
-async function syncTopAnimeCatalog(ctx: AppContext, maxPages?: number) {
+export async function syncTopAnimeCatalog(
+  ctx: AppContext,
+  maxPages?: number,
+  onProgress?: (progress: CatalogSyncProgress) => void
+) {
   if (!ctx.env.MAL_CLIENT_ID) return { pages: 0, upserted: 0 };
 
   const pageSize = 100;
@@ -989,13 +1079,19 @@ async function syncTopAnimeCatalog(ctx: AppContext, maxPages?: number) {
   let pages = 0;
 
   while (maxPages == null || pages < maxPages) {
+    const offset = pages * pageSize;
+    onProgress?.({ event: "fetching", page: pages + 1, offset, upserted });
+
     const payload = await fetchTopAnimePage({
       clientId: ctx.env.MAL_CLIENT_ID,
       limit: pageSize,
-      offset: pages * pageSize,
+      offset,
     });
 
     pages += 1;
+    const pageCount = payload.data?.length ?? 0;
+
+    const scoreWrites: Promise<unknown>[] = [];
 
     for (const item of payload.data ?? []) {
       const node = item.node;
@@ -1009,8 +1105,13 @@ async function syncTopAnimeCatalog(ctx: AppContext, maxPages?: number) {
           ...data,
         },
       });
+      scoreWrites.push(writeCachedMalScore(ctx, node.id, normalizeMalScore(node.mean)));
       upserted += 1;
     }
+
+    await Promise.all(scoreWrites);
+
+    onProgress?.({ event: "page", page: pages, offset, pageCount, upserted, hasNext: Boolean(payload.paging?.next) });
 
     if (!payload.paging?.next) break;
   }
@@ -1199,8 +1300,20 @@ export function buildServer(ctx: AppContext) {
 
   app.log.info("[Dozzle][DB] Fastify server initialized with Redis-backed rate limiting");
 
-  app.get("/health", async () => {
-    return { ok: true };
+  app.get("/health", async (_req, reply) => {
+    if (isCatalogStartupPending(ctx)) {
+      if (!ctx.catalogSync?.startupError || ctx.env.MAL_CATALOG_SYNC_REQUIRED) {
+        return reply.code(503).send({
+          ok: false,
+          catalogSync: catalogSyncResponse(ctx),
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      catalogSync: ctx.catalogSync ? catalogSyncResponse(ctx) : undefined,
+    };
   });
 
   app.get("/", async (req, reply) => {
@@ -1241,6 +1354,13 @@ export function buildServer(ctx: AppContext) {
     } catch (error) {
       req.log.warn({ error }, "Auth failed");
       return reply.code(401).send({ error: "Invalid session token" });
+    }
+
+    if (shouldGateAnimeRead(ctx, req.method, path)) {
+      return reply.code(503).send({
+        error: "MAL catalog is still syncing. Try again in a moment.",
+        catalogSync: catalogSyncResponse(ctx),
+      });
     }
   });
 
@@ -1836,7 +1956,7 @@ export function buildServer(ctx: AppContext) {
 
   let catalogSyncRunning = false;
 
-  const runCatalogSync = async (phase: "startup" | "background", failOnError = false) => {
+  const runCatalogSync = async (phase: "background") => {
     if (catalogSyncRunning) {
       app.log.info({ phase }, "MAL catalog sync skipped because another sync is already running");
       return;
@@ -1845,11 +1965,12 @@ export function buildServer(ctx: AppContext) {
     catalogSyncRunning = true;
     try {
       app.log.info({ phase, maxPages: ctx.env.MAL_CATALOG_SYNC_MAX_PAGES ?? null }, "MAL catalog sync started");
-      const result = await syncTopAnimeCatalog(ctx, ctx.env.MAL_CATALOG_SYNC_MAX_PAGES);
+      const result = await syncTopAnimeCatalog(ctx, ctx.env.MAL_CATALOG_SYNC_MAX_PAGES, (progress) => {
+        app.log.info({ phase, ...progress }, "MAL catalog sync progress");
+      });
       app.log.info({ phase, ...result }, "MAL catalog sync completed");
     } catch (error) {
       app.log.error({ phase, error }, "MAL catalog sync failed");
-      if (failOnError) throw error;
     } finally {
       catalogSyncRunning = false;
     }
@@ -1865,15 +1986,10 @@ export function buildServer(ctx: AppContext) {
       );
     };
 
-    if (ctx.env.MAL_CATALOG_SYNC_ON_START) {
-      app.addHook("onReady", async () => {
-        await runCatalogSync("startup", ctx.env.MAL_CATALOG_SYNC_REQUIRED);
-        startBackgroundCatalogSync();
-      });
-    } else {
+    if (!ctx.env.MAL_CATALOG_SYNC_ON_START) {
       void runCatalogSync("background");
-      startBackgroundCatalogSync();
     }
+    startBackgroundCatalogSync();
   } else {
     app.log.warn("MAL_CLIENT_ID not configured; MAL catalog sync disabled");
   }
