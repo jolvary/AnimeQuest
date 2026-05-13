@@ -6,6 +6,10 @@ using UnityEngine.UI;
 
 public class AnimeCatalogPanelController : MonoBehaviour
 {
+    private const float EpisodeStepperHeight = 28f;
+    private const float EpisodeButtonWidth = 28f;
+    private const float EpisodeButtonHeight = 26f;
+
     private static readonly string[] StatusLabels = { "Not in your list", "Watching", "Completed", "Planned", "Dropped", "On Hold" };
     private static readonly string[] StatusValues = { "", "watching", "completed", "planned", "dropped", "on_hold" };
     private static readonly Color DeckSurfaceColor = new Color(0.96f, 0.90f, 0.78f, 0.22f);
@@ -584,15 +588,16 @@ public class AnimeCatalogPanelController : MonoBehaviour
         rowObj.transform.SetParent(parent, false);
 
         var layout = rowObj.GetComponent<LayoutElement>();
-        layout.minHeight = 28f;
-        layout.preferredHeight = 28f;
+        layout.minHeight = EpisodeStepperHeight;
+        layout.preferredHeight = EpisodeStepperHeight;
 
         var row = rowObj.GetComponent<HorizontalLayoutGroup>();
         row.spacing = 4f;
+        row.childAlignment = TextAnchor.MiddleCenter;
         row.childControlWidth = true;
         row.childControlHeight = true;
         row.childForceExpandWidth = false;
-        row.childForceExpandHeight = true;
+        row.childForceExpandHeight = false;
 
         CreateSmallActionButton(rowObj.transform, "-", () => ChangeEpisodesWatched(item, -1));
         CreateValueLabel(rowObj.transform, FormatWatchedEpisodes(item.episodesWatched, item.episodes), 72f);
@@ -630,11 +635,12 @@ public class AnimeCatalogPanelController : MonoBehaviour
         buttonObj.transform.SetParent(parent, false);
 
         var layout = buttonObj.GetComponent<LayoutElement>();
-        layout.minWidth = 28f;
-        layout.preferredWidth = 28f;
-        layout.minHeight = 26f;
-        layout.preferredHeight = 26f;
+        layout.minWidth = EpisodeButtonWidth;
+        layout.preferredWidth = EpisodeButtonWidth;
+        layout.minHeight = EpisodeButtonHeight;
+        layout.preferredHeight = EpisodeButtonHeight;
         layout.flexibleWidth = 0f;
+        layout.flexibleHeight = 0f;
 
         buttonObj.GetComponent<Image>().color = new Color(0.42f, 0.27f, 0.14f, 0.95f);
         var button = buttonObj.GetComponent<Button>();
@@ -665,9 +671,10 @@ public class AnimeCatalogPanelController : MonoBehaviour
         var layout = obj.GetComponent<LayoutElement>();
         layout.minWidth = width;
         layout.preferredWidth = width;
-        layout.minHeight = 26f;
-        layout.preferredHeight = 26f;
+        layout.minHeight = EpisodeStepperHeight;
+        layout.preferredHeight = EpisodeStepperHeight;
         layout.flexibleWidth = 1f;
+        layout.flexibleHeight = 0f;
 
         var text = obj.GetComponent<Text>();
         text.text = value;
