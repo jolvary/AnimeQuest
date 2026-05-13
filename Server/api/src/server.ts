@@ -10,6 +10,8 @@ import { fetchNakamaAccount } from "./nakama";
 import {
   buildMalAuthorizationUrl,
   exchangeMalCodeForToken,
+  fetchAnimeDetails,
+  fetchAnimeTrailerYoutubeId,
   fetchCurrentMalUser,
   fetchTopAnimePage,
   fetchUserAnimeList,
@@ -34,6 +36,8 @@ export type AppContext = {
     MAL_TOKEN_ENCRYPTION_KEY?: string;
     MAL_SYNC_INTERVAL_MINUTES: number;
     MAL_CATALOG_SYNC_MAX_PAGES?: number;
+    MAL_CATALOG_SYNC_ON_START: boolean;
+    MAL_CATALOG_SYNC_REQUIRED: boolean;
   };
 };
 
@@ -105,6 +109,7 @@ const MAX_ANIME_LIMIT = 500;
 
 const stringOrNullSchema = { anyOf: [{ type: "string" }, { type: "null" }] };
 const integerOrNullSchema = { anyOf: [{ type: "integer" }, { type: "null" }] };
+const numberOrNullSchema = { anyOf: [{ type: "number" }, { type: "null" }] };
 const jsonObjectSchema = { type: "object", additionalProperties: true };
 const okResponseSchema = {
   type: "object",
@@ -146,6 +151,7 @@ const animeItemSchema = {
     briefDescription: { type: "string" },
     description: { type: "string" },
     imageUrl: { type: "string" },
+    databaseImageUrl: stringOrNullSchema,
     episodes: integerOrNullSchema,
     releaseDate: { type: "string" },
     isWatching: { type: "boolean" },
@@ -155,6 +161,7 @@ const animeItemSchema = {
     lists: { type: "array", items: { type: "string" } },
     genres: { type: "array", items: { type: "string" } },
     trailerYoutubeId: stringOrNullSchema,
+    malScore: numberOrNullSchema,
     provider: { type: "string" },
     providerId: { type: "string" },
   },
@@ -322,6 +329,16 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
     security: bearerSecurity,
     querystring: paginationQuerySchema,
     response: { 200: animeListResponseSchema },
+  },
+  "GET /api/anime/:id/details": {
+    tags: ["Anime"],
+    summary: "Devuelve el detalle de un anime y completa el tráiler de YouTube si está disponible.",
+    security: bearerSecurity,
+    params: idParamsSchema,
+    response: {
+      200: animeItemSchema,
+      404: errorResponseSchema,
+    },
   },
   "GET /api/anime/user": {
     tags: ["Anime"],
@@ -576,6 +593,7 @@ type AnimeDeckItem = {
   briefDescription: string;
   description: string;
   imageUrl: string;
+  databaseImageUrl: string | null;
   episodes: number | null;
   releaseDate: string;
   isWatching: boolean;
@@ -585,6 +603,7 @@ type AnimeDeckItem = {
   lists: string[];
   genres: string[];
   trailerYoutubeId: string | null;
+  malScore: number | null;
   provider: string;
   providerId: string;
   matchCount?: number;
@@ -684,7 +703,7 @@ function animeUpsertData(node: MalAnimeNode) {
   };
 }
 
-function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | null): AnimeDeckItem {
+function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | null, details?: { malScore?: number | null }): AnimeDeckItem {
   const watchStatus = normalizeWatchStatus(watch?.status ?? "");
 
   return {
@@ -693,6 +712,7 @@ function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | n
     briefDescription: buildBriefDescription(row),
     description: buildDescription(row),
     imageUrl: posterUrl(row),
+    databaseImageUrl: row.imageUrl,
     episodes: row.episodes,
     releaseDate: toReleaseDate(row.year),
     isWatching: watchStatus === "watching",
@@ -702,9 +722,68 @@ function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | n
     lists: watchStatus ? [watchStatus] : [],
     genres: row.genres,
     trailerYoutubeId: row.trailerYoutubeId,
+    malScore: details?.malScore ?? null,
     provider: row.provider,
     providerId: row.providerId,
   };
+}
+
+async function hydrateAnimeTrailerYoutubeId(ctx: AppContext, row: AnimeDeckSourceRow) {
+  if (row.trailerYoutubeId) return row.trailerYoutubeId;
+  if (row.provider !== "myanimelist") return null;
+
+  const malId = Number.parseInt(row.providerId, 10);
+  if (!Number.isFinite(malId) || malId <= 0) return null;
+
+  try {
+    const trailerYoutubeId = await fetchAnimeTrailerYoutubeId({ animeId: malId });
+    if (!trailerYoutubeId) return null;
+
+    await ctx.prisma.anime.update({
+      where: { animeId: row.animeId },
+      data: { trailerYoutubeId },
+    });
+
+    return trailerYoutubeId;
+  } catch {
+    return null;
+  }
+}
+
+async function hydrateAnimeExternalDetails(ctx: AppContext, row: AnimeDeckSourceRow) {
+  let nextRow = row;
+  let malScore: number | null = null;
+  if (row.provider !== "myanimelist" || !ctx.env.MAL_CLIENT_ID) {
+    return { row: nextRow, malScore };
+  }
+
+  const malId = Number.parseInt(row.providerId, 10);
+  if (!Number.isFinite(malId) || malId <= 0) {
+    return { row: nextRow, malScore };
+  }
+
+  try {
+    const details = await fetchAnimeDetails({
+      clientId: ctx.env.MAL_CLIENT_ID,
+      animeId: malId,
+    });
+
+    malScore = typeof details.mean === "number" && Number.isFinite(details.mean) ? details.mean : null;
+    const imageUrl = details.main_picture?.large ?? details.main_picture?.medium ?? null;
+
+    if (!row.imageUrl && imageUrl) {
+      await ctx.prisma.anime.update({
+        where: { animeId: row.animeId },
+        data: { imageUrl },
+      });
+
+      nextRow = { ...row, imageUrl };
+    }
+  } catch {
+    return { row: nextRow, malScore };
+  }
+
+  return { row: nextRow, malScore };
 }
 
 function parseAnimeListQuery(query: { q?: string; limit?: string; offset?: string }) {
@@ -1222,6 +1301,40 @@ export function buildServer(ctx: AppContext) {
     };
   });
 
+  app.get("/api/anime/:id/details", async (req, reply) => {
+    const userId = req.userId!;
+    const params = req.params as { id: string };
+
+    const row = await ctx.prisma.anime.findUnique({
+      where: { animeId: params.id },
+      select: {
+        animeId: true,
+        title: true,
+        imageUrl: true,
+        synopsis: true,
+        year: true,
+        episodes: true,
+        genres: true,
+        trailerYoutubeId: true,
+        provider: true,
+        providerId: true,
+        watchEntries: {
+          where: { userId },
+          select: { status: true, score: true, episodesWatched: true },
+          take: 1,
+        },
+      },
+    });
+
+    if (!row) {
+      return reply.code(404).send({ error: "Anime not found" });
+    }
+
+    const details = await hydrateAnimeExternalDetails(ctx, row);
+    const trailerYoutubeId = await hydrateAnimeTrailerYoutubeId(ctx, details.row);
+    return buildAnimeDeckItem({ ...details.row, trailerYoutubeId }, row.watchEntries[0], { malScore: details.malScore });
+  });
+
   app.get("/api/anime/user", async (req) => {
     const userId = req.userId!;
     const { q, limit, offset } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
@@ -1721,18 +1834,46 @@ export function buildServer(ctx: AppContext) {
     };
   });
 
-  const runCatalogSync = async () => {
+  let catalogSyncRunning = false;
+
+  const runCatalogSync = async (phase: "startup" | "background", failOnError = false) => {
+    if (catalogSyncRunning) {
+      app.log.info({ phase }, "MAL catalog sync skipped because another sync is already running");
+      return;
+    }
+
+    catalogSyncRunning = true;
     try {
+      app.log.info({ phase, maxPages: ctx.env.MAL_CATALOG_SYNC_MAX_PAGES ?? null }, "MAL catalog sync started");
       const result = await syncTopAnimeCatalog(ctx, ctx.env.MAL_CATALOG_SYNC_MAX_PAGES);
-      app.log.info(result, "MAL catalog sync completed");
+      app.log.info({ phase, ...result }, "MAL catalog sync completed");
     } catch (error) {
-      app.log.error({ error }, "MAL catalog sync failed");
+      app.log.error({ phase, error }, "MAL catalog sync failed");
+      if (failOnError) throw error;
+    } finally {
+      catalogSyncRunning = false;
     }
   };
 
   if (ctx.env.MAL_CLIENT_ID) {
-    runCatalogSync();
-    setInterval(runCatalogSync, Math.max(ctx.env.MAL_SYNC_INTERVAL_MINUTES, 5) * 60 * 1000);
+    const startBackgroundCatalogSync = () => {
+      setInterval(
+        () => {
+          void runCatalogSync("background");
+        },
+        Math.max(ctx.env.MAL_SYNC_INTERVAL_MINUTES, 5) * 60 * 1000
+      );
+    };
+
+    if (ctx.env.MAL_CATALOG_SYNC_ON_START) {
+      app.addHook("onReady", async () => {
+        await runCatalogSync("startup", ctx.env.MAL_CATALOG_SYNC_REQUIRED);
+        startBackgroundCatalogSync();
+      });
+    } else {
+      void runCatalogSync("background");
+      startBackgroundCatalogSync();
+    }
   } else {
     app.log.warn("MAL_CLIENT_ID not configured; MAL catalog sync disabled");
   }

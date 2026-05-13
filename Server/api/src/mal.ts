@@ -7,6 +7,33 @@ export type MalAnimeNode = {
   media_type?: string;
   main_picture?: { medium?: string; large?: string };
   synopsis?: string;
+  mean?: number;
+  rank?: number;
+  popularity?: number;
+  num_list_users?: number;
+};
+
+type JikanTrailer = {
+  youtube_id?: string | null;
+  url?: string | null;
+  embed_url?: string | null;
+};
+
+type JikanPromo = {
+  trailer?: JikanTrailer | null;
+};
+
+type JikanAnimeVideosResponse = {
+  data?: {
+    promo?: JikanPromo[];
+    promos?: JikanPromo[];
+  };
+};
+
+type JikanAnimeFullResponse = {
+  data?: {
+    trailer?: JikanTrailer | null;
+  };
 };
 
 export type MalTokenResponse = {
@@ -23,16 +50,51 @@ export type MalCurrentUser = {
 const MAL_API_BASE = "https://api.myanimelist.net/v2";
 const MAL_AUTH_URL = "https://myanimelist.net/v1/oauth2/authorize";
 const MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
+const JIKAN_API_BASE = "https://api.jikan.moe/v4";
 const ANIME_FIELDS = [
   "id",
   "title",
   "main_picture",
   "synopsis",
+  "mean",
+  "rank",
+  "popularity",
+  "num_list_users",
   "genres",
   "num_episodes",
   "start_season",
   "media_type",
 ].join(",");
+
+function normalizeYoutubeId(value?: string | null) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  return /^[A-Za-z0-9_-]{6,32}$/.test(trimmed) ? trimmed : null;
+}
+
+function youtubeIdFromUrl(value?: string | null) {
+  if (!value) return null;
+
+  try {
+    const url = new URL(value);
+    const directId = normalizeYoutubeId(url.searchParams.get("v"));
+    if (directId) return directId;
+
+    const pathMatch = url.pathname.match(/\/(?:embed|shorts|watch)\/([A-Za-z0-9_-]{6,32})/);
+    if (pathMatch) return normalizeYoutubeId(pathMatch[1]);
+  } catch {
+    const fallbackMatch = value.match(/(?:embed\/|watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{6,32})/);
+    if (fallbackMatch) return normalizeYoutubeId(fallbackMatch[1]);
+  }
+
+  return null;
+}
+
+function trailerYoutubeId(trailer?: JikanTrailer | null) {
+  return normalizeYoutubeId(trailer?.youtube_id) ??
+    youtubeIdFromUrl(trailer?.url) ??
+    youtubeIdFromUrl(trailer?.embed_url);
+}
 
 function authHeaders(clientId: string, accessToken?: string): Record<string, string> {
   const headers: Record<string, string> = { "X-MAL-CLIENT-ID": clientId };
@@ -109,6 +171,32 @@ export async function fetchAnimeDetails(params: { clientId: string; animeId: num
   const response = await fetch(url, { headers: authHeaders(params.clientId, params.accessToken) });
   if (!response.ok) throw new Error(`MAL anime detail request failed: ${response.status}`);
   return (await response.json()) as MalAnimeNode;
+}
+
+export async function fetchAnimeTrailerYoutubeId(params: { animeId: number }) {
+  const videosUrl = `${JIKAN_API_BASE}/anime/${params.animeId}/videos`;
+  const videosResponse = await fetch(videosUrl, {
+    headers: { "user-agent": "AnimeQuest/0.1 trailer lookup" },
+  });
+
+  if (videosResponse.ok) {
+    const payload = (await videosResponse.json()) as JikanAnimeVideosResponse;
+    const promos = payload.data?.promo ?? payload.data?.promos ?? [];
+    for (const promo of promos) {
+      const youtubeId = trailerYoutubeId(promo.trailer);
+      if (youtubeId) return youtubeId;
+    }
+  }
+
+  const fullUrl = `${JIKAN_API_BASE}/anime/${params.animeId}/full`;
+  const fullResponse = await fetch(fullUrl, {
+    headers: { "user-agent": "AnimeQuest/0.1 trailer lookup" },
+  });
+
+  if (!fullResponse.ok) return null;
+
+  const payload = (await fullResponse.json()) as JikanAnimeFullResponse;
+  return trailerYoutubeId(payload.data?.trailer);
 }
 
 export async function fetchCurrentMalUser(params: { clientId: string; accessToken: string }) {

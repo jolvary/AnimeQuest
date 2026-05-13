@@ -67,6 +67,10 @@ services:
       NAKAMA_HTTP: "http://nakama:7350"
       NAKAMA_SERVER_KEY: "devserverkey"
       MAL_SYNC_INTERVAL_MINUTES: ${MAL_SYNC_INTERVAL_MINUTES:-60}
+      # Leave empty to sync the full MAL ranking catalog before the API becomes healthy.
+      MAL_CATALOG_SYNC_MAX_PAGES: ${MAL_CATALOG_SYNC_MAX_PAGES:-}
+      MAL_CATALOG_SYNC_ON_START: ${MAL_CATALOG_SYNC_ON_START:-true}
+      MAL_CATALOG_SYNC_REQUIRED: ${MAL_CATALOG_SYNC_REQUIRED:-true}
     depends_on:
       app-db:
         condition: service_healthy
@@ -74,6 +78,12 @@ services:
         condition: service_started
       nakama:
         condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 30m
     ports:
       - "3000:3000"
 

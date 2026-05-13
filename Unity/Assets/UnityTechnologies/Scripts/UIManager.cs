@@ -19,6 +19,7 @@ public class UIManager : MonoBehaviour
     public GameObject questsPanel;
     public GameObject animePanel;
     public GameObject userCatalogPanel;
+    public GameObject animeDetailPanel;
     public GameObject matchingPanel;
     public GameObject tablePanel;
 
@@ -28,6 +29,7 @@ public class UIManager : MonoBehaviour
     public QuestPanelController questPanelController;
     public AnimeCatalogPanelController animeCatalogPanelController;
     public AnimeCatalogPanelController userCatalogPanelController;
+    public AnimeDetailPanelController animeDetailPanelController;
     public MatchingPanelController matchingPanelController;
     public TableViewerPanelController tableViewerPanelController;
 
@@ -84,6 +86,7 @@ public class UIManager : MonoBehaviour
         EnsureChatPanel();
         EnsureFriendsPanel();
         EnsureUserCatalogPanel();
+        EnsureAnimeDetailPanel();
         EnsureMatchingPanel();
         ConfigurePanelControllers();
         ApplyPanelVisuals();
@@ -146,6 +149,21 @@ public class UIManager : MonoBehaviour
         EnsureMatchingPanel();
         ToggleExclusive(matchingPanel);
         matchingPanelController?.RefreshMatches();
+    }
+
+    public void OpenAnimeDetailPanel(AnimeDetailPanelController.AnimeDetailItem item)
+    {
+        if (item == null) return;
+
+        EnsureAnimeDetailPanel();
+        HideAll();
+        if (animeDetailPanel != null)
+        {
+            animeDetailPanel.SetActive(true);
+        }
+
+        RefreshCursorState();
+        animeDetailPanelController?.OpenAnime(item);
     }
 
     public void OpenTablePanel(string tableName)
@@ -231,6 +249,7 @@ public class UIManager : MonoBehaviour
         if (questsPanel) questsPanel.SetActive(false);
         if (animePanel) animePanel.SetActive(false);
         if (userCatalogPanel) userCatalogPanel.SetActive(false);
+        if (animeDetailPanel) animeDetailPanel.SetActive(false);
         if (matchingPanel) matchingPanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
         HidePanelWheel();
@@ -368,7 +387,7 @@ public class UIManager : MonoBehaviour
         userCatalogPanel.name = "Panel_UserCatalog";
         userCatalogPanelController.userCatalogOnly = true;
         userCatalogPanelController.defaultLimit = 100;
-        userCatalogPanelController.ConfigureFont(panelTitleFont);
+        userCatalogPanelController.Configure(this, panelTitleFont);
         userCatalogPanel.SetActive(false);
     }
 
@@ -406,6 +425,42 @@ public class UIManager : MonoBehaviour
         matchingPanelController.defaultLimit = 100;
         matchingPanelController.ConfigureFont(panelTitleFont);
         matchingPanel.SetActive(false);
+    }
+
+    private void EnsureAnimeDetailPanel()
+    {
+        if (animeDetailPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_AnimeDetail") : null;
+
+            if (existing != null)
+            {
+                animeDetailPanel = existing.gameObject;
+            }
+        }
+
+        if (animeDetailPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            animeDetailPanel = new GameObject("Panel_AnimeDetail", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(AnimeDetailPanelController));
+            animeDetailPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(animeDetailPanel);
+        }
+
+        if (animeDetailPanelController == null)
+        {
+            animeDetailPanelController = animeDetailPanel.GetComponent<AnimeDetailPanelController>();
+        }
+
+        if (animeDetailPanelController == null)
+        {
+            animeDetailPanelController = animeDetailPanel.AddComponent<AnimeDetailPanelController>();
+        }
+
+        animeDetailPanel.name = "Panel_AnimeDetail";
+        animeDetailPanelController.ConfigureFont(panelTitleFont);
+        animeDetailPanel.SetActive(false);
     }
 
     private Transform ResolvePanelParent()
@@ -458,6 +513,7 @@ public class UIManager : MonoBehaviour
         ApplyPanelSprite(questsPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(animePanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(userCatalogPanel, fantasyWoodenBoardSprite);
+        ApplyPanelSprite(animeDetailPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(matchingPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(tablePanel, fantasyWoodenBoardSprite);
     }
@@ -481,6 +537,7 @@ public class UIManager : MonoBehaviour
         AddCloseButton(questsPanel);
         AddCloseButton(animePanel);
         AddCloseButton(userCatalogPanel);
+        AddCloseButton(animeDetailPanel);
         AddCloseButton(matchingPanel);
         AddCloseButton(tablePanel);
         AddWeeklyQuestTitle();
@@ -1140,6 +1197,7 @@ public class UIManager : MonoBehaviour
                (questsPanel && questsPanel.activeSelf) ||
                (animePanel && animePanel.activeSelf) ||
                (userCatalogPanel && userCatalogPanel.activeSelf) ||
+               (animeDetailPanel && animeDetailPanel.activeSelf) ||
                (matchingPanel && matchingPanel.activeSelf) ||
                (tablePanel && tablePanel.activeSelf) ||
                IsPanelWheelOpen();
@@ -1187,18 +1245,25 @@ public class UIManager : MonoBehaviour
         chatPanelController?.ConfigureFont(panelTitleFont);
         friendsPanelController?.Configure(this, panelTitleFont);
         questPanelController?.ConfigureFont(panelTitleFont);
-        animeCatalogPanelController?.ConfigureFont(panelTitleFont);
+        if (animeCatalogPanelController != null)
+        {
+            animeCatalogPanelController.Configure(this, panelTitleFont);
+        }
         if (animeCatalogPanelController != null)
         {
             animeCatalogPanelController.userCatalogOnly = false;
             animeCatalogPanelController.defaultLimit = 100;
         }
-        userCatalogPanelController?.ConfigureFont(panelTitleFont);
+        if (userCatalogPanelController != null)
+        {
+            userCatalogPanelController.Configure(this, panelTitleFont);
+        }
         if (userCatalogPanelController != null)
         {
             userCatalogPanelController.userCatalogOnly = true;
             userCatalogPanelController.defaultLimit = 100;
         }
+        animeDetailPanelController?.ConfigureFont(panelTitleFont);
         matchingPanelController?.ConfigureFont(panelTitleFont);
         if (matchingPanelController != null)
         {

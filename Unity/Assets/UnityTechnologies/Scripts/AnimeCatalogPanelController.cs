@@ -37,6 +37,13 @@ public class AnimeCatalogPanelController : MonoBehaviour
     private bool _isIncognitoMode;
     private int _currentOffset;
     private bool _hasNextPage;
+    private UIManager _uiManager;
+
+    public void Configure(UIManager uiManager, Font font)
+    {
+        _uiManager = uiManager;
+        ConfigureFont(font);
+    }
 
     public void ConfigureFont(Font font)
     {
@@ -521,11 +528,46 @@ public class AnimeCatalogPanelController : MonoBehaviour
         vLayout.childControlHeight = true;
         vLayout.childForceExpandHeight = false;
 
-        CreateLabel(infoObj.transform, item.title, 18, FontStyle.Bold, TextAnchor.UpperLeft, 28f);
+        CreateTitleButton(infoObj.transform, item);
         CreateLabel(infoObj.transform, Safe(item.description), 14, FontStyle.Normal, TextAnchor.UpperLeft, 66f);
 
         string metadata = $"Episodes: {FormatEpisodes(item.episodes)}  |  Release: {Safe(item.releaseDate)} | Genres: {FormatGenres(item.genres)}";
         CreateLabel(infoObj.transform, metadata, 13, FontStyle.Italic, TextAnchor.UpperLeft, 24f);
+    }
+
+    private void CreateTitleButton(Transform parent, AnimeDeckItem item)
+    {
+        var buttonObj = new GameObject("TitleButton", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
+        buttonObj.transform.SetParent(parent, false);
+
+        var layout = buttonObj.GetComponent<LayoutElement>();
+        layout.minHeight = 30f;
+        layout.preferredHeight = 30f;
+
+        var image = buttonObj.GetComponent<Image>();
+        image.color = new Color(0f, 0f, 0f, 0f);
+
+        var button = buttonObj.GetComponent<Button>();
+        button.transition = Selectable.Transition.ColorTint;
+        button.onClick.AddListener(() => OpenAnimeDetail(item));
+
+        var textObj = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        textObj.transform.SetParent(buttonObj.transform, false);
+        var rect = textObj.GetComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        var text = textObj.GetComponent<Text>();
+        text.text = item != null ? item.title : "Anime";
+        text.font = ResolveFont();
+        text.fontSize = 18;
+        text.fontStyle = FontStyle.Bold;
+        text.color = new Color(0.10f, 0.18f, 0.42f, 1f);
+        text.alignment = TextAnchor.UpperLeft;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
     }
 
     private void CreateActionsArea(AnimeDeckItem item, Transform parent)
@@ -864,17 +906,24 @@ public class AnimeCatalogPanelController : MonoBehaviour
         int cap = item.episodes > 0 ? item.episodes : UnknownEpisodeCap;
         int nextEpisodesWatched = Mathf.Clamp(item.episodesWatched + delta, 0, cap);
         if (nextEpisodesWatched == item.episodesWatched) return;
-        UpdateAnimeProgress(item, item.score, nextEpisodesWatched);
+
+        string nextStatus = string.IsNullOrWhiteSpace(item.watchStatus) ? string.Empty : item.watchStatus.Trim().ToLowerInvariant();
+        if (delta > 0 && nextEpisodesWatched > 0 && string.IsNullOrWhiteSpace(nextStatus))
+        {
+            nextStatus = "watching";
+        }
+
+        UpdateAnimeProgress(item, item.score, nextEpisodesWatched, nextStatus);
     }
 
-    private async void UpdateAnimeProgress(AnimeDeckItem item, int score, int episodesWatched)
+    private async void UpdateAnimeProgress(AnimeDeckItem item, int score, int episodesWatched, string statusOverride = null)
     {
         if (_isIncognitoMode || item == null || ApiClient.Instance == null) return;
 
         int cap = item.episodes > 0 ? item.episodes : UnknownEpisodeCap;
         int nextEpisodesWatched = Mathf.Clamp(episodesWatched, 0, cap);
         int nextScore = Mathf.Clamp(score, 0, 10);
-        string status = string.IsNullOrWhiteSpace(item.watchStatus) ? string.Empty : item.watchStatus.Trim().ToLowerInvariant();
+        string status = statusOverride ?? (string.IsNullOrWhiteSpace(item.watchStatus) ? string.Empty : item.watchStatus.Trim().ToLowerInvariant());
 
         try
         {
@@ -888,6 +937,39 @@ public class AnimeCatalogPanelController : MonoBehaviour
             _statusText.text = "Failed to update anime progress.";
             DozzleLogger.Error("Anime progress update failed", ex);
         }
+    }
+
+    private void OpenAnimeDetail(AnimeDeckItem item)
+    {
+        if (item == null) return;
+
+        var manager = _uiManager != null
+            ? _uiManager
+            : FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        if (manager == null) return;
+
+        manager.OpenAnimeDetailPanel(new AnimeDetailPanelController.AnimeDetailItem
+        {
+            id = item.id,
+            title = item.title,
+            briefDescription = item.briefDescription,
+            description = item.description,
+            imageUrl = item.imageUrl,
+            databaseImageUrl = item.databaseImageUrl,
+            episodes = item.episodes,
+            releaseDate = item.releaseDate,
+            isWatching = item.isWatching,
+            watchStatus = item.watchStatus,
+            score = item.score,
+            episodesWatched = item.episodesWatched,
+            lists = item.lists,
+            genres = item.genres,
+            trailerYoutubeId = item.trailerYoutubeId,
+            malScore = item.malScore,
+            provider = item.provider,
+            providerId = item.providerId,
+            streamingPlatforms = item.streamingPlatforms,
+        });
     }
 
     private Text CreateLabel(Transform parent, string value, int fontSize, FontStyle fontStyle, TextAnchor alignment, float minHeight = 0f)
@@ -1156,6 +1238,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
         public string briefDescription;
         public string description;
         public string imageUrl;
+        public string databaseImageUrl;
         public int episodes;
         public string releaseDate;
         public bool isWatching;
@@ -1165,7 +1248,9 @@ public class AnimeCatalogPanelController : MonoBehaviour
         public string[] lists;
         public string[] genres;
         public string trailerYoutubeId;
+        public float malScore;
         public string provider;
         public string providerId;
+        public string streamingPlatforms;
     }
 }

@@ -80,6 +80,7 @@ const ALLOWED_IMAGE_HOSTS = new Set([
   'myanimelist.net',
   'img.youtube.com',
   'i.ytimg.com',
+  'www.google.com',
   'placehold.co',
 ]);
 
@@ -276,6 +277,14 @@ function optionalInt(name: string): number | undefined {
   const value = Number.parseInt(raw, 10);
   if (!Number.isFinite(value) || value <= 0) return undefined;
   return value;
+}
+
+function optionalBool(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return fallback;
 }
 
 function compact(value: unknown, maxLength = 500): string | null {
@@ -1074,6 +1083,8 @@ async function main() {
       MAL_TOKEN_ENCRYPTION_KEY: optional('MAL_TOKEN_ENCRYPTION_KEY'),
       MAL_SYNC_INTERVAL_MINUTES: Number.parseInt(process.env.MAL_SYNC_INTERVAL_MINUTES ?? '60', 10),
       MAL_CATALOG_SYNC_MAX_PAGES: optionalInt('MAL_CATALOG_SYNC_MAX_PAGES'),
+      MAL_CATALOG_SYNC_ON_START: optionalBool('MAL_CATALOG_SYNC_ON_START', true),
+      MAL_CATALOG_SYNC_REQUIRED: optionalBool('MAL_CATALOG_SYNC_REQUIRED', true),
     },
   });
 
