@@ -53152,9 +53152,8 @@ MonoBehaviour:
     account, import your list, browse the synced catalog, track episodes, discover
     suggestions, compare shows with friends, and chat while you explore.'
   helpText: Use the Tab wheel to open panels at any time. Anime shows the shared
-    catalog, My List shows your imported or tracked anime, Matches compares favorites
-    with other players, and guide NPCs can show genres or personalized MyAnimeList
-    suggestions.
+    catalog, Matches compares favorites with other players, and recommendations use
+    your linked MyAnimeList history to suggest what to watch next.
   uiManager: {fileID: 0}
   questPanelController: {fileID: 0}
   mainMenuAuthController: {fileID: 0}

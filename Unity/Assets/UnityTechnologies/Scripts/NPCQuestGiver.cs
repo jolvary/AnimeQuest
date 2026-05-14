@@ -15,7 +15,11 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
 
     [TextArea(4, 8)]
     public string helpText =
-        "Use the Tab wheel to open panels at any time. Anime shows the shared catalog, My List shows your imported or tracked anime, Matches compares favorites with other players, and guide NPCs can show genres or personalized MyAnimeList suggestions.";
+        "Use the Tab wheel to open panels at any time. Anime shows the shared catalog, Matches compares favorites with other players, and recommendations use your linked MyAnimeList history to suggest what to watch next.";
+
+    [TextArea(3, 6)]
+    public string recommendationsUnavailableText =
+        "I need a little anime history before I can recommend anything useful. Log in with an account and import or track a few shows first; then come back and I can suggest anime based on what you already like.";
 
     [Header("References")]
     public UIManager uiManager;
@@ -72,7 +76,7 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
             {
                 new DialoguePanelController.DialogueOption("Start / Login", OpenMainMenu),
                 new DialoguePanelController.DialogueOption("Browse Anime Catalog", () => uiManager.OpenAnimePanel()),
-                new DialoguePanelController.DialogueOption("Open My List", () => uiManager.OpenUserCatalogPanel()),
+                new DialoguePanelController.DialogueOption("Recommended Anime", OpenRecommendedAnime),
                 new DialoguePanelController.DialogueOption("How does this work?", ShowHelpDialogue),
                 new DialoguePanelController.DialogueOption("Leave", () => uiManager.CloseDialoguePanel()),
             }
@@ -87,10 +91,43 @@ public class NPCQuestGiver : MonoBehaviour, IInteractable
             new DialoguePanelController.DialogueOption[]
             {
                 new DialoguePanelController.DialogueOption("Start / Login", OpenMainMenu),
+                new DialoguePanelController.DialogueOption("Recommended Anime", OpenRecommendedAnime),
                 new DialoguePanelController.DialogueOption("Back", ShowIntroDialogue),
                 new DialoguePanelController.DialogueOption("Leave", () => uiManager.CloseDialoguePanel()),
             }
         );
+    }
+
+    private void OpenRecommendedAnime()
+    {
+        if (NeedsAccountForRecommendations())
+        {
+            ShowRecommendationsUnavailableDialogue();
+            return;
+        }
+
+        uiManager?.OpenAnimeSuggestionsPanel();
+        Debug.Log($"{npcName}: opened recommended anime for quest code {questCode}");
+    }
+
+    private void ShowRecommendationsUnavailableDialogue()
+    {
+        uiManager.OpenDialoguePanel(
+            npcName,
+            recommendationsUnavailableText,
+            new DialoguePanelController.DialogueOption[]
+            {
+                new DialoguePanelController.DialogueOption("Start / Login", OpenMainMenu),
+                new DialoguePanelController.DialogueOption("Back", ShowIntroDialogue),
+                new DialoguePanelController.DialogueOption("Leave", () => uiManager.CloseDialoguePanel()),
+            }
+        );
+    }
+
+    private static bool NeedsAccountForRecommendations()
+    {
+        var auth = NakamaAuthManager.Instance;
+        return auth == null || !auth.IsAuthenticated || auth.IsIncognitoSession;
     }
 
     private void OpenMainMenu()
