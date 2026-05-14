@@ -48,6 +48,7 @@ model Anime {
   genres           String[] @default([])
   episodes         Int?
   year             Int?
+  malScore         Float?   @map("mal_score")
   trailerYoutubeId String?  @map("trailer_youtube_id")
   createdAt        DateTime @default(now()) @map("created_at")
 

@@ -64,6 +64,7 @@ type AnimeDeckSourceRow = {
   episodes: number | null;
   genres: string[];
   trailerYoutubeId: string | null;
+  malScore: number | null;
   provider: string;
   providerId: string;
 };
@@ -86,6 +87,7 @@ type AnimeListRow = Prisma.AnimeGetPayload<{
     episodes: true;
     genres: true;
     trailerYoutubeId: true;
+    malScore: true;
     provider: true;
     providerId: true;
     watchEntries: {
@@ -803,6 +805,7 @@ function animeUpsertData(node: MalAnimeNode) {
     genres: (node.genres ?? []).map((g) => g.name),
     episodes: node.num_episodes ?? null,
     year: node.start_season?.year ?? null,
+    malScore: normalizeMalScore(node.mean),
   };
 }
 
@@ -866,7 +869,7 @@ function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | n
     lists: watchStatus ? [watchStatus] : [],
     genres: row.genres,
     trailerYoutubeId: row.trailerYoutubeId,
-    malScore: details?.malScore ?? null,
+    malScore: details?.malScore ?? row.malScore ?? null,
     provider: row.provider,
     providerId: row.providerId,
   };
@@ -896,7 +899,7 @@ async function hydrateAnimeTrailerYoutubeId(ctx: AppContext, row: AnimeDeckSourc
 
 async function hydrateAnimeExternalDetails(ctx: AppContext, row: AnimeDeckSourceRow) {
   let nextRow = row;
-  let malScore: number | null = null;
+  let malScore: number | null = row.malScore ?? null;
   if (row.provider !== "myanimelist" || !ctx.env.MAL_CLIENT_ID) {
     return { row: nextRow, malScore };
   }
@@ -908,7 +911,21 @@ async function hydrateAnimeExternalDetails(ctx: AppContext, row: AnimeDeckSource
 
   const cachedScore = await readCachedMalScore(ctx, malId);
   if (cachedScore.hit) {
-    malScore = cachedScore.score;
+    const cachedMalScore = cachedScore.score;
+    if (cachedMalScore !== null || malScore === null) {
+      malScore = cachedMalScore;
+    }
+    if (cachedMalScore !== null && row.malScore !== cachedMalScore) {
+      try {
+        await ctx.prisma.anime.update({
+          where: { animeId: row.animeId },
+          data: { malScore: cachedMalScore },
+        });
+        nextRow = { ...nextRow, malScore: cachedMalScore };
+      } catch {
+        nextRow = { ...nextRow, malScore: cachedMalScore };
+      }
+    }
     if (row.imageUrl) {
       return { row: nextRow, malScore };
     }
@@ -923,14 +940,23 @@ async function hydrateAnimeExternalDetails(ctx: AppContext, row: AnimeDeckSource
     malScore = normalizeMalScore(details.mean);
     await writeCachedMalScore(ctx, malId, malScore);
     const imageUrl = details.main_picture?.large ?? details.main_picture?.medium ?? null;
+    const updateData: Prisma.AnimeUpdateInput = {};
 
     if (!row.imageUrl && imageUrl) {
+      updateData.imageUrl = imageUrl;
+      nextRow = { ...nextRow, imageUrl };
+    }
+
+    if (row.malScore !== malScore) {
+      updateData.malScore = malScore;
+      nextRow = { ...nextRow, malScore };
+    }
+
+    if (Object.keys(updateData).length > 0) {
       await ctx.prisma.anime.update({
         where: { animeId: row.animeId },
-        data: { imageUrl },
+        data: updateData,
       });
-
-      nextRow = { ...row, imageUrl };
     }
   } catch {
     return { row: nextRow, malScore };
@@ -1512,6 +1538,7 @@ export function buildServer(ctx: AppContext) {
         episodes: true,
         genres: true,
         trailerYoutubeId: true,
+        malScore: true,
         provider: true,
         providerId: true,
         watchEntries: {
@@ -1547,7 +1574,10 @@ export function buildServer(ctx: AppContext) {
           ...(titleSearch ? [titleSearch] : []),
         ],
       },
-      orderBy: { title: "asc" },
+      orderBy: [
+        { malScore: { sort: "desc", nulls: "last" } },
+        { title: "asc" },
+      ],
       skip: offset,
       take: limit + 1,
       select: {
@@ -1563,6 +1593,7 @@ export function buildServer(ctx: AppContext) {
         episodes: true,
         genres: true,
         trailerYoutubeId: true,
+        malScore: true,
         provider: true,
         providerId: true,
         watchEntries: {
@@ -1635,6 +1666,7 @@ export function buildServer(ctx: AppContext) {
         episodes: true,
         genres: true,
         trailerYoutubeId: true,
+        malScore: true,
         provider: true,
         providerId: true,
         watchEntries: {
@@ -1679,6 +1711,7 @@ export function buildServer(ctx: AppContext) {
         episodes: true,
         genres: true,
         trailerYoutubeId: true,
+        malScore: true,
         provider: true,
         providerId: true,
         watchEntries: {
@@ -1728,6 +1761,7 @@ export function buildServer(ctx: AppContext) {
             episodes: true,
             genres: true,
             trailerYoutubeId: true,
+            malScore: true,
             provider: true,
             providerId: true,
           },
@@ -1774,6 +1808,7 @@ export function buildServer(ctx: AppContext) {
             episodes: true,
             genres: true,
             trailerYoutubeId: true,
+            malScore: true,
             provider: true,
             providerId: true,
           },

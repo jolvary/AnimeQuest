@@ -39,6 +39,7 @@ CREATE TABLE anime (
   genres TEXT[] NOT NULL DEFAULT '{}',
   episodes INT CHECK (episodes IS NULL OR episodes >= 0),
   year INT CHECK (year IS NULL OR year >= 1900),
+  mal_score DOUBLE PRECISION CHECK (mal_score IS NULL OR mal_score > 0),
   trailer_youtube_id TEXT,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   UNIQUE(provider, provider_id)
@@ -49,6 +50,7 @@ CREATE INDEX idx_anime_title_english ON anime(title_english);
 CREATE INDEX idx_anime_title_japanese ON anime(title_japanese);
 CREATE INDEX idx_anime_title_spanish ON anime(title_spanish);
 CREATE INDEX idx_anime_title_synonyms ON anime USING GIN(title_synonyms);
+CREATE INDEX idx_anime_mal_score ON anime(mal_score DESC);
 CREATE INDEX idx_anime_year ON anime(year);
 CREATE INDEX idx_anime_provider_provider_id ON anime(provider, provider_id);
 
