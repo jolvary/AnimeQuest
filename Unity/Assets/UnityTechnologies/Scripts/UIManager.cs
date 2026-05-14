@@ -21,7 +21,9 @@ public class UIManager : MonoBehaviour
     public GameObject userCatalogPanel;
     public GameObject animeDetailPanel;
     public GameObject matchingPanel;
+    public GameObject mapPanel;
     public GameObject tablePanel;
+    public GameObject dialoguePanel;
 
     [Header("Controllers")]
     public NakamaChatPanelController chatPanelController;
@@ -31,7 +33,9 @@ public class UIManager : MonoBehaviour
     public AnimeCatalogPanelController userCatalogPanelController;
     public AnimeDetailPanelController animeDetailPanelController;
     public MatchingPanelController matchingPanelController;
+    public MapPanelController mapPanelController;
     public TableViewerPanelController tableViewerPanelController;
+    public DialoguePanelController dialoguePanelController;
 
     [Header("Visuals")]
     public Sprite fantasyWoodenBoardSprite;
@@ -88,6 +92,8 @@ public class UIManager : MonoBehaviour
         EnsureUserCatalogPanel();
         EnsureAnimeDetailPanel();
         EnsureMatchingPanel();
+        EnsureMapPanel();
+        EnsureDialoguePanel();
         ConfigurePanelControllers();
         ApplyPanelVisuals();
         AddCloseButtons();
@@ -114,6 +120,7 @@ public class UIManager : MonoBehaviour
         if (Keyboard.current.lKey.wasPressedThisFrame) OpenAnimePanel();
         if (Keyboard.current.uKey.wasPressedThisFrame) OpenUserCatalogPanel();
         if (Keyboard.current.nKey.wasPressedThisFrame) OpenMatchingPanel();
+        if (Keyboard.current.mKey.wasPressedThisFrame) OpenMapPanel();
         if (Keyboard.current.tabKey.wasPressedThisFrame) TogglePanelWheel();
     }
 
@@ -133,6 +140,11 @@ public class UIManager : MonoBehaviour
 
     public void OpenAnimePanel()
     {
+        if (animeCatalogPanelController != null)
+        {
+            animeCatalogPanelController.defaultLimit = 100;
+            animeCatalogPanelController.UseGlobalCatalog();
+        }
         ToggleExclusive(animePanel);
         animeCatalogPanelController?.RefreshCatalog();
     }
@@ -140,8 +152,38 @@ public class UIManager : MonoBehaviour
     public void OpenUserCatalogPanel()
     {
         EnsureUserCatalogPanel();
+        userCatalogPanelController?.UseUserCatalog();
         ToggleExclusive(userCatalogPanel);
         userCatalogPanelController?.RefreshCatalog();
+    }
+
+    public void OpenAnimeGenrePanel(string genre)
+    {
+        if (animeCatalogPanelController == null) return;
+        animeCatalogPanelController.defaultLimit = 100;
+        animeCatalogPanelController.UseGenreCatalog(genre);
+        HideAll();
+        if (animePanel != null)
+        {
+            animePanel.SetActive(true);
+        }
+
+        RefreshCursorState();
+        animeCatalogPanelController.RefreshCatalog();
+    }
+
+    public void OpenAnimeSuggestionsPanel()
+    {
+        if (animeCatalogPanelController == null) return;
+        animeCatalogPanelController.UseSuggestedCatalog();
+        HideAll();
+        if (animePanel != null)
+        {
+            animePanel.SetActive(true);
+        }
+
+        RefreshCursorState();
+        animeCatalogPanelController.RefreshCatalog();
     }
 
     public void OpenMatchingPanel()
@@ -149,6 +191,39 @@ public class UIManager : MonoBehaviour
         EnsureMatchingPanel();
         ToggleExclusive(matchingPanel);
         matchingPanelController?.RefreshMatches();
+    }
+
+    public void OpenMapPanel()
+    {
+        EnsureMapPanel();
+        bool isOpening = ToggleExclusive(mapPanel);
+        if (isOpening)
+        {
+            mapPanelController?.RefreshMap();
+        }
+    }
+
+    public void OpenDialoguePanel(string speaker, string body, DialoguePanelController.DialogueOption[] options)
+    {
+        EnsureDialoguePanel();
+        HideAll();
+        if (dialoguePanel != null)
+        {
+            dialoguePanel.SetActive(true);
+        }
+
+        RefreshCursorState();
+        dialoguePanelController?.Show(speaker, body, options);
+    }
+
+    public void CloseDialoguePanel()
+    {
+        if (dialoguePanel != null)
+        {
+            dialoguePanel.SetActive(false);
+        }
+
+        RefreshCursorState();
     }
 
     public void OpenAnimeDetailPanel(AnimeDetailPanelController.AnimeDetailItem item)
@@ -251,7 +326,9 @@ public class UIManager : MonoBehaviour
         if (userCatalogPanel) userCatalogPanel.SetActive(false);
         if (animeDetailPanel) animeDetailPanel.SetActive(false);
         if (matchingPanel) matchingPanel.SetActive(false);
+        if (mapPanel) mapPanel.SetActive(false);
         if (tablePanel) tablePanel.SetActive(false);
+        if (dialoguePanel) dialoguePanel.SetActive(false);
         HidePanelWheel();
 
         RefreshCursorState();
@@ -387,6 +464,7 @@ public class UIManager : MonoBehaviour
         userCatalogPanel.name = "Panel_UserCatalog";
         userCatalogPanelController.userCatalogOnly = true;
         userCatalogPanelController.defaultLimit = 100;
+        userCatalogPanelController.UseUserCatalog();
         userCatalogPanelController.Configure(this, panelTitleFont);
         userCatalogPanel.SetActive(false);
     }
@@ -427,6 +505,41 @@ public class UIManager : MonoBehaviour
         matchingPanel.SetActive(false);
     }
 
+    private void EnsureMapPanel()
+    {
+        if (mapPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_Map") : null;
+            if (existing != null)
+            {
+                mapPanel = existing.gameObject;
+            }
+        }
+
+        if (mapPanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            mapPanel = new GameObject("Panel_Map", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(MapPanelController));
+            mapPanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(mapPanel);
+        }
+
+        if (mapPanelController == null)
+        {
+            mapPanelController = mapPanel.GetComponent<MapPanelController>();
+        }
+
+        if (mapPanelController == null)
+        {
+            mapPanelController = mapPanel.AddComponent<MapPanelController>();
+        }
+
+        mapPanel.name = "Panel_Map";
+        mapPanelController.ConfigureFont(panelTitleFont);
+        mapPanel.SetActive(false);
+    }
+
     private void EnsureAnimeDetailPanel()
     {
         if (animeDetailPanel == null)
@@ -461,6 +574,41 @@ public class UIManager : MonoBehaviour
         animeDetailPanel.name = "Panel_AnimeDetail";
         animeDetailPanelController.ConfigureFont(panelTitleFont);
         animeDetailPanel.SetActive(false);
+    }
+
+    private void EnsureDialoguePanel()
+    {
+        if (dialoguePanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            Transform existing = parent != null ? parent.Find("Panel_Dialogue") : null;
+            if (existing != null)
+            {
+                dialoguePanel = existing.gameObject;
+            }
+        }
+
+        if (dialoguePanel == null)
+        {
+            Transform parent = ResolvePanelParent();
+            dialoguePanel = new GameObject("Panel_Dialogue", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(DialoguePanelController));
+            dialoguePanel.transform.SetParent(parent != null ? parent : transform, false);
+            ConfigureGeneratedPanelRect(dialoguePanel);
+        }
+
+        if (dialoguePanelController == null)
+        {
+            dialoguePanelController = dialoguePanel.GetComponent<DialoguePanelController>();
+        }
+
+        if (dialoguePanelController == null)
+        {
+            dialoguePanelController = dialoguePanel.AddComponent<DialoguePanelController>();
+        }
+
+        dialoguePanel.name = "Panel_Dialogue";
+        dialoguePanelController.ConfigureFont(panelTitleFont);
+        dialoguePanel.SetActive(false);
     }
 
     private Transform ResolvePanelParent()
@@ -515,7 +663,9 @@ public class UIManager : MonoBehaviour
         ApplyPanelSprite(userCatalogPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(animeDetailPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(matchingPanel, fantasyWoodenBoardSprite);
+        ApplyPanelSprite(mapPanel, fantasyWoodenBoardSprite);
         ApplyPanelSprite(tablePanel, fantasyWoodenBoardSprite);
+        ApplyPanelSprite(dialoguePanel, fantasyWoodenBoardSprite);
     }
 
     private static void ApplyPanelSprite(GameObject panel, Sprite sprite)
@@ -539,7 +689,9 @@ public class UIManager : MonoBehaviour
         AddCloseButton(userCatalogPanel);
         AddCloseButton(animeDetailPanel);
         AddCloseButton(matchingPanel);
+        AddCloseButton(mapPanel);
         AddCloseButton(tablePanel);
+        AddCloseButton(dialoguePanel);
         AddWeeklyQuestTitle();
     }
 
@@ -622,12 +774,13 @@ public class UIManager : MonoBehaviour
 
         const float radius = 222f;
         CreateWheelButton("Wheel_Anime", "Anime", 90f, radius, OpenAnimePanel);
-        CreateWheelButton("Wheel_UserCatalog", "My List", 39f, radius, OpenUserCatalogPanel);
-        CreateWheelButton("Wheel_Quests", "Quests", -13f, radius, OpenQuestsPanel);
-        CreateWheelButton("Wheel_Friends", "Friends", -64f, radius, OpenFriendsPanel);
-        _chatToolbarButton = CreateWheelButton("Wheel_Chat", "Chat", -116f, radius, OpenChatPanel);
-        CreateWheelButton("Wheel_Matching", "Matches", -167f, radius, OpenMatchingPanel);
-        CreateWheelButton("Wheel_Characters", "Chars", 141f, radius, OpenCharactersPanel);
+        CreateWheelButton("Wheel_UserCatalog", "My List", 45f, radius, OpenUserCatalogPanel);
+        CreateWheelButton("Wheel_Quests", "Quests", 0f, radius, OpenQuestsPanel);
+        CreateWheelButton("Wheel_Friends", "Friends", -45f, radius, OpenFriendsPanel);
+        _chatToolbarButton = CreateWheelButton("Wheel_Chat", "Chat", -90f, radius, OpenChatPanel);
+        CreateWheelButton("Wheel_Matching", "Matches", -135f, radius, OpenMatchingPanel);
+        CreateWheelButton("Wheel_Characters", "Chars", 180f, radius, OpenCharactersPanel);
+        CreateWheelButton("Wheel_Map", "Map", 135f, radius, OpenMapPanel);
         EnsureChatNotificationBadge();
         RefreshChatNotificationBadge();
 
@@ -1199,7 +1352,9 @@ public class UIManager : MonoBehaviour
                (userCatalogPanel && userCatalogPanel.activeSelf) ||
                (animeDetailPanel && animeDetailPanel.activeSelf) ||
                (matchingPanel && matchingPanel.activeSelf) ||
+               (mapPanel && mapPanel.activeSelf) ||
                (tablePanel && tablePanel.activeSelf) ||
+               (dialoguePanel && dialoguePanel.activeSelf) ||
                IsPanelWheelOpen();
     }
 
@@ -1253,6 +1408,7 @@ public class UIManager : MonoBehaviour
         {
             animeCatalogPanelController.userCatalogOnly = false;
             animeCatalogPanelController.defaultLimit = 100;
+            animeCatalogPanelController.UseGlobalCatalog();
         }
         if (userCatalogPanelController != null)
         {
@@ -1262,9 +1418,12 @@ public class UIManager : MonoBehaviour
         {
             userCatalogPanelController.userCatalogOnly = true;
             userCatalogPanelController.defaultLimit = 100;
+            userCatalogPanelController.UseUserCatalog();
         }
         animeDetailPanelController?.ConfigureFont(panelTitleFont);
         matchingPanelController?.ConfigureFont(panelTitleFont);
+        mapPanelController?.ConfigureFont(panelTitleFont);
+        dialoguePanelController?.ConfigureFont(panelTitleFont);
         if (matchingPanelController != null)
         {
             matchingPanelController.defaultLimit = 100;

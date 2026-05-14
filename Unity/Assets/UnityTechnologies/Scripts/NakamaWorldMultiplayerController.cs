@@ -116,6 +116,25 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         DozzleLogger.Action("World multiplayer character selection applied", $"character={_selectedCharacterKey};color={_selectedRobotColor};client={ShortClientId()};channel={(_worldChannel != null ? _worldChannel.Id : "none")};socketReady={(_socket != null ? "yes" : "no")}");
     }
 
+    public List<RemoteMapEntry> GetRemoteMapEntries()
+    {
+        var entries = new List<RemoteMapEntry>();
+        foreach (var remote in _remotePlayers.Values)
+        {
+            if (remote == null || remote.transform == null || remote.root == null || !remote.root.activeInHierarchy) continue;
+            if (Time.unscaledTime - remote.lastSeenAt > RemoteTimeoutSeconds) continue;
+
+            entries.Add(new RemoteMapEntry
+            {
+                target = remote.transform,
+                userId = remote.userId,
+                username = string.IsNullOrWhiteSpace(remote.username) ? "Friend" : remote.username
+            });
+        }
+
+        return entries;
+    }
+
     private void MaintainWorldConnection()
     {
         var auth = NakamaAuthManager.Instance;
@@ -650,11 +669,13 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         remote.targetPosition = new Vector3(state.px, state.py, state.pz);
         remote.targetRotation = Quaternion.Euler(0f, state.ry, 0f);
         remote.lastSeenAt = Time.unscaledTime;
+        remote.userId = state.userId;
+        remote.username = string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username;
         ApplyRemoteAppearanceState(remote, state);
         ApplyRemoteAnimationState(remote, state);
         if (remote.nameLabel != null)
         {
-            remote.nameLabel.text = string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username;
+            remote.nameLabel.text = remote.username;
         }
     }
 
@@ -746,6 +767,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
             namePlate = label.transform,
             nameLabel = label,
             animator = animator,
+            userId = state.userId,
+            username = string.IsNullOrWhiteSpace(state.username) ? "Player" : state.username,
             characterKey = characterKey,
             robotColor = robotColor,
             grounded = true,
@@ -1228,6 +1251,8 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         public Transform namePlate;
         public Text nameLabel;
         public Animator animator;
+        public string userId;
+        public string username;
         public string characterKey;
         public string robotColor;
         public Vector3 targetPosition;
@@ -1237,6 +1262,13 @@ public class NakamaWorldMultiplayerController : MonoBehaviour
         public float targetMotionSpeed;
         public bool grounded;
         public float lastSeenAt;
+    }
+
+    public struct RemoteMapEntry
+    {
+        public Transform target;
+        public string userId;
+        public string username;
     }
 
     private class LocalAnimationState

@@ -11,6 +11,7 @@ import {
   buildMalAuthorizationUrl,
   exchangeMalCodeForToken,
   fetchAnimeDetails,
+  fetchAnimeSuggestions,
   fetchAnimeTrailerYoutubeId,
   fetchCurrentMalUser,
   fetchTopAnimePage,
@@ -155,6 +156,12 @@ const idParamsSchema = {
   type: "object",
   properties: {
     id: { type: "string", description: "Identificador interno del anime." },
+  },
+};
+const genreParamsSchema = {
+  type: "object",
+  properties: {
+    genre: { type: "string", description: "Nombre del genero de MyAnimeList." },
   },
 };
 const codeParamsSchema = {
@@ -349,6 +356,21 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
     security: bearerSecurity,
     querystring: paginationQuerySchema,
     response: { 200: animeListResponseSchema },
+  },
+  "GET /api/anime/genre/:genre": {
+    tags: ["Anime"],
+    summary: "Lista anime del catalogo local filtrado por genero MAL.",
+    security: bearerSecurity,
+    params: genreParamsSchema,
+    querystring: paginationQuerySchema,
+    response: { 200: animeListResponseSchema },
+  },
+  "GET /api/anime/suggestions": {
+    tags: ["Anime"],
+    summary: "Lista sugerencias personalizadas de MyAnimeList para el usuario.",
+    security: bearerSecurity,
+    querystring: paginationQuerySchema,
+    response: { 200: animeListResponseSchema, 401: errorResponseSchema },
   },
   "GET /api/anime/:id/details": {
     tags: ["Anime"],
@@ -859,6 +881,19 @@ function parseAnimeListQuery(query: { q?: string; limit?: string; offset?: strin
   const limit = Math.min(Math.max(requestedLimit, 1), MAX_ANIME_LIMIT);
   const offset = Math.max(requestedOffset, 0);
   return { q, limit, offset };
+}
+
+async function resolveCanonicalAnimeGenre(ctx: AppContext, requestedGenre: string) {
+  const genre = requestedGenre.trim();
+  if (!genre) return genre;
+
+  const rows = await ctx.prisma.$queryRaw<{ genre: string }[]>`
+    SELECT genre
+    FROM (SELECT DISTINCT unnest(genres) AS genre FROM anime) AS anime_genres
+    WHERE lower(genre) = lower(${genre})
+    LIMIT 1
+  `;
+  return rows[0]?.genre ?? genre;
 }
 
 function isCatalogStartupPending(ctx: AppContext) {
@@ -1418,6 +1453,129 @@ export function buildServer(ctx: AppContext) {
       limit,
       offset,
       hasMore,
+    };
+  });
+
+  app.get("/api/anime/genre/:genre", async (req) => {
+    const userId = req.userId!;
+    const params = req.params as { genre: string };
+    const { q, limit, offset } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
+    const genre = await resolveCanonicalAnimeGenre(ctx, decodeURIComponent(params.genre));
+
+    const rows: AnimeListRow[] = await ctx.prisma.anime.findMany({
+      where: {
+        genres: { has: genre },
+        ...(q
+          ? {
+              title: {
+                contains: q,
+                mode: "insensitive",
+              },
+            }
+          : {}),
+      },
+      orderBy: { title: "asc" },
+      skip: offset,
+      take: limit + 1,
+      select: {
+        animeId: true,
+        title: true,
+        imageUrl: true,
+        synopsis: true,
+        year: true,
+        episodes: true,
+        genres: true,
+        trailerYoutubeId: true,
+        provider: true,
+        providerId: true,
+        watchEntries: {
+          where: { userId },
+          select: { status: true, score: true, episodesWatched: true },
+          take: 1,
+        },
+      },
+    });
+    const pageRows = rows.slice(0, limit);
+    const hasMore = rows.length > limit;
+    req.log.info({ userId, genre, count: pageRows.length, search: q ?? "", limit, offset, hasMore }, "[Dozzle][DB] genre anime catalog query");
+
+    return {
+      items: pageRows.map((row) => buildAnimeDeckItem(row, row.watchEntries[0])),
+      limit,
+      offset,
+      hasMore,
+    };
+  });
+
+  app.get("/api/anime/suggestions", async (req, reply) => {
+    const userId = req.userId!;
+    const { limit, offset } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
+    const tokenResult = await getValidMalAccessToken(ctx, userId);
+    if (!tokenResult.ok) return reply.code(tokenResult.statusCode).send({ error: tokenResult.error });
+
+    const payload = await fetchAnimeSuggestions({
+      clientId: ctx.env.MAL_CLIENT_ID!,
+      accessToken: tokenResult.accessToken,
+      limit,
+      offset,
+    });
+
+    const providerIds: string[] = [];
+    const scoreWrites: Promise<unknown>[] = [];
+    for (const item of payload.data ?? []) {
+      const node = item.node;
+      const providerId = String(node.id);
+      providerIds.push(providerId);
+      scoreWrites.push(writeCachedMalScore(ctx, node.id, normalizeMalScore(node.mean)));
+
+      await ctx.prisma.anime.upsert({
+        where: { provider_providerId: { provider: "myanimelist", providerId } },
+        update: animeUpsertData(node),
+        create: {
+          provider: "myanimelist",
+          providerId,
+          ...animeUpsertData(node),
+        },
+      });
+    }
+    await Promise.all(scoreWrites);
+
+    const rows: AnimeListRow[] = await ctx.prisma.anime.findMany({
+      where: {
+        provider: "myanimelist",
+        providerId: { in: providerIds },
+      },
+      select: {
+        animeId: true,
+        title: true,
+        imageUrl: true,
+        synopsis: true,
+        year: true,
+        episodes: true,
+        genres: true,
+        trailerYoutubeId: true,
+        provider: true,
+        providerId: true,
+        watchEntries: {
+          where: { userId },
+          select: { status: true, score: true, episodesWatched: true },
+          take: 1,
+        },
+      },
+    });
+    const rowByProviderId = new Map(rows.map((row) => [row.providerId, row]));
+    const items = providerIds
+      .map((providerId) => rowByProviderId.get(providerId))
+      .filter((row): row is AnimeListRow => Boolean(row))
+      .map((row) => buildAnimeDeckItem(row, row.watchEntries[0]));
+
+    req.log.info({ userId, count: items.length, limit, offset, hasMore: Boolean(payload.paging?.next) }, "[Dozzle][MAL] anime suggestions query");
+
+    return {
+      items,
+      limit,
+      offset,
+      hasMore: Boolean(payload.paging?.next),
     };
   });
 

@@ -5,9 +5,25 @@ using UnityEngine.EventSystems;
 using StarterAssets;
 using System;
 using System.Threading.Tasks;
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 public class MainMenuAuthController : MonoBehaviour
 {
+    private static readonly Color InkColor = new Color(0.16f, 0.08f, 0.03f, 1f);
+    private static readonly Color MutedInkColor = new Color(0.29f, 0.20f, 0.12f, 1f);
+    private static readonly Color PanelSurfaceColor = new Color(0.67f, 0.43f, 0.22f, 0.18f);
+    private static readonly Color FieldColor = new Color(0.95f, 0.86f, 0.66f, 0.88f);
+    private static readonly Color FieldPlaceholderColor = new Color(0.42f, 0.32f, 0.22f, 0.72f);
+    private static readonly Color FrameColor = new Color(0.23f, 0.13f, 0.06f, 0.92f);
+    private static readonly Color PrimaryButtonColor = new Color(0.25f, 0.48f, 0.22f, 0.96f);
+    private static readonly Color SecondaryButtonColor = new Color(0.35f, 0.45f, 0.56f, 0.94f);
+    private static readonly Color DangerButtonColor = new Color(0.57f, 0.20f, 0.15f, 0.96f);
+    private static readonly Color AccentButtonColor = new Color(0.60f, 0.40f, 0.17f, 0.96f);
+    private static readonly Color ButtonTextColor = new Color(1f, 0.94f, 0.80f, 1f);
+    private static readonly Color StatusColor = new Color(0.52f, 0.08f, 0.03f, 1f);
+
     [Header("Visual style")]
     public Sprite panelSprite;
     public Font panelFont;
@@ -16,6 +32,9 @@ public class MainMenuAuthController : MonoBehaviour
     public UIManager uiManager;
     public AnimeCatalogPanelController animeCatalogPanelController;
     public AnimeCatalogPanelController userCatalogPanelController;
+
+    [Header("Startup")]
+    public bool openOnStart;
 
     [Header("Events")]
     public UnityEvent<string, string> onLoginRequested = new UnityEvent<string, string>();
@@ -43,6 +62,8 @@ public class MainMenuAuthController : MonoBehaviour
     private bool _isRefreshingMalStatus;
     private bool _authRequestInProgress;
     private bool _hasSpawnPoint;
+    private bool _isInitialized;
+    private bool _wasExplicitlyOpened;
     private Vector3 _spawnPosition;
     private float _spawnRotationY;
 
@@ -55,26 +76,40 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void Start()
     {
-        if (uiManager == null)
+        InitializeIfNeeded();
+        if (openOnStart || _wasExplicitlyOpened)
         {
-            uiManager = FindFirstObjectByType<UIManager>();
+            ShowLoginPanel();
         }
-
-        if (animeCatalogPanelController == null)
+        else
         {
-            animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>();
+            PrepareHidden();
         }
+    }
 
-        ResolveUserCatalogController();
-        ResolveVisualStyle();
-        BuildPanels();
-        CaptureSpawnPointIfNeeded();
-        ShowLoginPanel();
-        RefreshInteractionState();
+    public void PrepareHidden()
+    {
+        InitializeIfNeeded();
+        HideAuthPanels();
+        if (gameObject.activeSelf)
+        {
+            gameObject.SetActive(false);
+        }
+        else
+        {
+            SetPlayerMovementEnabled(true);
+        }
     }
 
     public void ShowLoginPanel()
     {
+        _wasExplicitlyOpened = true;
+        if (!gameObject.activeSelf)
+        {
+            gameObject.SetActive(true);
+        }
+
+        InitializeIfNeeded();
         bool isLoggedIn = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated && !NakamaAuthManager.Instance.IsIncognitoSession;
 
         if (_loginPanel != null) _loginPanel.SetActive(!isLoggedIn);
@@ -92,6 +127,7 @@ public class MainMenuAuthController : MonoBehaviour
 
     public void ShowRegisterPanel()
     {
+        InitializeIfNeeded();
         if (_authRequestInProgress)
         {
             SetLoginStatus("Please wait for login to finish.");
@@ -103,6 +139,37 @@ public class MainMenuAuthController : MonoBehaviour
         if (_loggedInPanel != null) _loggedInPanel.SetActive(false);
         if (_registerStatus != null) _registerStatus.text = string.Empty;
         RefreshInteractionState();
+    }
+
+    private void InitializeIfNeeded()
+    {
+        if (_isInitialized) return;
+
+        EnsureCanvasRoot();
+        EnsureEventSystemExists();
+
+        if (uiManager == null)
+        {
+            uiManager = FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        }
+
+        if (animeCatalogPanelController == null)
+        {
+            animeCatalogPanelController = FindFirstObjectByType<AnimeCatalogPanelController>(FindObjectsInactive.Include);
+        }
+
+        ResolveUserCatalogController();
+        ResolveVisualStyle();
+        BuildPanels();
+        CaptureSpawnPointIfNeeded();
+        _isInitialized = true;
+    }
+
+    private void HideAuthPanels()
+    {
+        if (_loginPanel != null) _loginPanel.SetActive(false);
+        if (_registerPanel != null) _registerPanel.SetActive(false);
+        if (_loggedInPanel != null) _loggedInPanel.SetActive(false);
     }
 
 
@@ -157,14 +224,10 @@ public class MainMenuAuthController : MonoBehaviour
             panelSprite = uiManager.fantasyWoodenBoardSprite;
         }
 
-        if (panelFont == null && uiManager != null)
+        panelFont = ResolvePanelFont(panelFont, uiManager != null ? uiManager.panelTitleFont : null);
+        if (uiManager != null && uiManager.panelTitleFont == null && IsPreferredPanelFont(panelFont))
         {
-            panelFont = uiManager.panelTitleFont;
-        }
-
-        if (panelFont == null)
-        {
-            panelFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            uiManager.panelTitleFont = panelFont;
         }
     }
 
@@ -209,7 +272,7 @@ public class MainMenuAuthController : MonoBehaviour
         rect.anchorMin = new Vector2(0.5f, 0.5f);
         rect.anchorMax = new Vector2(0.5f, 0.5f);
         rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = new Vector2(860f, 520f);
+        rect.sizeDelta = new Vector2(920f, 560f);
 
         var image = panel.GetComponent<Image>();
         image.sprite = panelSprite;
@@ -222,45 +285,51 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void BuildLoginPanel(Transform parent)
     {
-        CreateHeader(parent, "MAIN MENU");
+        CreateHeader(parent, "AnimeQuest");
+        CreateSubHeader(parent, "Main Menu");
+        CreateSurface(parent, "LoginSurface", new Vector2(0.5f, 0.48f), new Vector2(650f, 250f));
 
-        _loginUsername = CreateInput(parent, "UsernameInput", new Vector2(0.5f, 0.62f), "Enter Username...");
-        _loginPassword = CreateInput(parent, "PasswordInput", new Vector2(0.5f, 0.47f), "Enter Password...", true);
+        _loginUsername = CreateInput(parent, "UsernameInput", new Vector2(0.5f, 0.58f), "Username");
+        _loginPassword = CreateInput(parent, "PasswordInput", new Vector2(0.5f, 0.45f), "Password", true);
 
-        CreateButton(parent, "LoginButton", "Login", new Vector2(0.5f, 0.34f), new Vector2(220f, 48f), new Color(0.22f, 0.86f, 0.21f), OnLoginPressed);
-        CreateButton(parent, "RegisterNavButton", "Create Account", new Vector2(0.79f, 0.22f), new Vector2(210f, 42f), new Color(0.87f, 0.17f, 0.16f), ShowRegisterPanel);
-        CreateButton(parent, "IncognitoButton", "Enter in Incognito", new Vector2(0.23f, 0.22f), new Vector2(250f, 42f), new Color(0.32f, 0.50f, 0.76f), OnIncognitoPressed);
+        CreateButton(parent, "LoginButton", "Login", new Vector2(0.5f, 0.32f), new Vector2(250f, 52f), PrimaryButtonColor, OnLoginPressed);
+        CreateButton(parent, "IncognitoButton", "Incognito", new Vector2(0.32f, 0.20f), new Vector2(230f, 46f), SecondaryButtonColor, OnIncognitoPressed);
+        CreateButton(parent, "RegisterNavButton", "Create Account", new Vector2(0.68f, 0.20f), new Vector2(250f, 46f), DangerButtonColor, ShowRegisterPanel);
         CreateCloseButton(parent);
 
-        _loginStatus = CreateLabel(parent, "LoginStatus", new Vector2(0.5f, 0.14f), new Vector2(600f, 36f), 30, Color.red, string.Empty);
+        _loginStatus = CreateLabel(parent, "LoginStatus", new Vector2(0.5f, 0.11f), new Vector2(620f, 34f), 21, StatusColor, string.Empty, FontStyle.Bold);
     }
 
     private void BuildRegisterPanel(Transform parent)
     {
-        CreateHeader(parent, "REGISTER USER");
+        CreateHeader(parent, "AnimeQuest");
+        CreateSubHeader(parent, "Create Account");
+        CreateSurface(parent, "RegisterSurface", new Vector2(0.5f, 0.48f), new Vector2(650f, 250f));
         CreateCloseButton(parent);
 
-        _registerUsername = CreateInput(parent, "RegisterUsernameInput", new Vector2(0.5f, 0.62f), "Create Username...");
-        _registerPassword = CreateInput(parent, "RegisterPasswordInput", new Vector2(0.5f, 0.47f), "Create Password...", true);
+        _registerUsername = CreateInput(parent, "RegisterUsernameInput", new Vector2(0.5f, 0.58f), "Username");
+        _registerPassword = CreateInput(parent, "RegisterPasswordInput", new Vector2(0.5f, 0.45f), "Password", true);
 
-        CreateButton(parent, "CreateAccountButton", "Create Account", new Vector2(0.5f, 0.34f), new Vector2(240f, 48f), new Color(0.23f, 0.77f, 0.27f), OnRegisterPressed);
-        CreateButton(parent, "GoToLoginButton", "Go to Login", new Vector2(0.5f, 0.22f), new Vector2(240f, 42f), new Color(0.30f, 0.50f, 0.80f), ShowLoginPanel);
+        CreateButton(parent, "CreateAccountButton", "Create Account", new Vector2(0.5f, 0.32f), new Vector2(270f, 52f), PrimaryButtonColor, OnRegisterPressed);
+        CreateButton(parent, "GoToLoginButton", "Back to Login", new Vector2(0.5f, 0.20f), new Vector2(240f, 46f), SecondaryButtonColor, ShowLoginPanel);
 
-        _registerStatus = CreateLabel(parent, "RegisterStatus", new Vector2(0.5f, 0.14f), new Vector2(600f, 36f), 30, new Color(1f, 0.85f, 0.2f), string.Empty);
+        _registerStatus = CreateLabel(parent, "RegisterStatus", new Vector2(0.5f, 0.11f), new Vector2(620f, 34f), 21, StatusColor, string.Empty, FontStyle.Bold);
     }
 
 
 
     private void BuildLoggedInPanel(Transform parent)
     {
-        CreateHeader(parent, "MAIN MENU");
+        CreateHeader(parent, "AnimeQuest");
+        CreateSubHeader(parent, "Account");
+        CreateSurface(parent, "AccountSurface", new Vector2(0.5f, 0.48f), new Vector2(690f, 280f));
         CreateCloseButton(parent);
-        CreateLabel(parent, "LoggedInLabel", new Vector2(0.5f, 0.61f), new Vector2(700f, 42f), 28, Color.black, "You are already logged in.");
-        _linkMalButton = CreateButton(parent, "LinkMalButton", "Link MyAnimeList account", new Vector2(0.5f, 0.47f), new Vector2(390f, 48f), new Color(0.22f, 0.62f, 0.88f), OnLinkMyAnimeListPressed);
-        _importMalButton = CreateButton(parent, "ImportMalButton", "Import MyAnimeList", new Vector2(0.5f, 0.34f), new Vector2(310f, 48f), new Color(0.23f, 0.77f, 0.27f), OnImportMyAnimeListPressed);
-        _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.24f), new Vector2(740f, 36f), 24, Color.black, string.Empty);
-        CreateButton(parent, "UnstuckButton", "Unstuck", new Vector2(0.32f, 0.13f), new Vector2(220f, 52f), new Color(0.93f, 0.68f, 0.20f), OnUnstuckPressed);
-        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.68f, 0.13f), new Vector2(220f, 52f), new Color(0.82f, 0.19f, 0.19f), OnLogoutPressed);
+        CreateLabel(parent, "LoggedInLabel", new Vector2(0.5f, 0.61f), new Vector2(700f, 34f), 22, InkColor, "Signed in", FontStyle.Bold);
+        _linkMalButton = CreateButton(parent, "LinkMalButton", "Link MyAnimeList", new Vector2(0.5f, 0.49f), new Vector2(340f, 50f), SecondaryButtonColor, OnLinkMyAnimeListPressed);
+        _importMalButton = CreateButton(parent, "ImportMalButton", "Import List", new Vector2(0.5f, 0.38f), new Vector2(260f, 50f), PrimaryButtonColor, OnImportMyAnimeListPressed);
+        _malImportStatus = CreateLabel(parent, "MalImportStatus", new Vector2(0.5f, 0.27f), new Vector2(700f, 36f), 20, MutedInkColor, string.Empty);
+        CreateButton(parent, "UnstuckButton", "Unstuck", new Vector2(0.34f, 0.15f), new Vector2(210f, 48f), AccentButtonColor, OnUnstuckPressed);
+        CreateButton(parent, "LogoutButton", "Log out", new Vector2(0.66f, 0.15f), new Vector2(210f, 48f), DangerButtonColor, OnLogoutPressed);
         ApplyMyAnimeListStatus(null);
     }
 
@@ -659,6 +728,8 @@ public class MainMenuAuthController : MonoBehaviour
 
     private void OnEnable()
     {
+        if (!_isInitialized) return;
+
         CaptureSpawnPointIfNeeded();
         RefreshInteractionState();
         if (_loggedInPanel != null && _loggedInPanel.activeSelf)
@@ -670,6 +741,7 @@ public class MainMenuAuthController : MonoBehaviour
     private void OnApplicationFocus(bool hasFocus)
     {
         if (!hasFocus) return;
+        if (!_isInitialized) return;
 
         CaptureSpawnPointIfNeeded();
         RefreshInteractionState();
@@ -855,26 +927,33 @@ public class MainMenuAuthController : MonoBehaviour
 
     private InputField CreateInput(Transform parent, string name, Vector2 anchor, string placeholderText, bool isPassword = false)
     {
-        var inputObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(InputField));
+        var inputObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(InputField), typeof(Outline));
         inputObj.transform.SetParent(parent, false);
 
         var rect = inputObj.GetComponent<RectTransform>();
         rect.anchorMin = anchor;
         rect.anchorMax = anchor;
         rect.pivot = new Vector2(0.5f, 0.5f);
-        rect.sizeDelta = new Vector2(520f, 78f);
+        rect.sizeDelta = new Vector2(540f, 58f);
 
         var image = inputObj.GetComponent<Image>();
-        image.color = new Color(0.92f, 0.92f, 0.92f, 1f);
+        image.color = FieldColor;
+
+        var outline = inputObj.GetComponent<Outline>();
+        outline.effectColor = FrameColor;
+        outline.effectDistance = new Vector2(3f, -3f);
+        outline.useGraphicAlpha = false;
 
         var inputField = inputObj.GetComponent<InputField>();
         inputField.contentType = isPassword ? InputField.ContentType.Password : InputField.ContentType.Standard;
+        inputField.caretColor = InkColor;
+        inputField.selectionColor = new Color(0.48f, 0.28f, 0.12f, 0.32f);
 
         var text = CreateInputText(inputObj.transform, "Text", string.Empty, Color.black, FontStyle.Normal);
         text.alignment = TextAnchor.MiddleLeft;
         text.resizeTextForBestFit = false;
 
-        var placeholder = CreateInputText(inputObj.transform, "Placeholder", placeholderText, new Color(0.65f, 0.65f, 0.65f, 1f), FontStyle.Italic);
+        var placeholder = CreateInputText(inputObj.transform, "Placeholder", placeholderText, FieldPlaceholderColor, FontStyle.Italic);
         placeholder.alignment = TextAnchor.MiddleLeft;
 
         inputField.textComponent = text;
@@ -891,22 +970,51 @@ public class MainMenuAuthController : MonoBehaviour
         var textRect = textObj.GetComponent<RectTransform>();
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = new Vector2(18f, 10f);
-        textRect.offsetMax = new Vector2(-18f, -10f);
+        textRect.offsetMin = new Vector2(22f, 6f);
+        textRect.offsetMax = new Vector2(-22f, -6f);
 
         var text = textObj.GetComponent<Text>();
         text.text = value;
         text.font = panelFont;
-        text.fontSize = 40;
+        text.fontSize = 27;
         text.fontStyle = style;
         text.color = color;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
 
         return text;
     }
 
     private void CreateHeader(Transform parent, string title)
     {
-        CreateLabel(parent, "Header", new Vector2(0.5f, 0.86f), new Vector2(500f, 62f), 54, Color.black, title, FontStyle.Italic);
+        var header = CreateLabel(parent, "Header", new Vector2(0.5f, 0.84f), new Vector2(620f, 64f), 48, InkColor, title, FontStyle.Bold);
+        AddTextShadow(header, new Color(0.94f, 0.75f, 0.44f, 0.42f), new Vector2(3f, -3f));
+    }
+
+    private void CreateSubHeader(Transform parent, string title)
+    {
+        CreateLabel(parent, "SubHeader", new Vector2(0.5f, 0.75f), new Vector2(520f, 30f), 20, MutedInkColor, title, FontStyle.Bold);
+    }
+
+    private void CreateSurface(Transform parent, string name, Vector2 anchor, Vector2 size)
+    {
+        var surfaceObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Outline));
+        surfaceObj.transform.SetParent(parent, false);
+
+        var rect = surfaceObj.GetComponent<RectTransform>();
+        rect.anchorMin = anchor;
+        rect.anchorMax = anchor;
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = size;
+
+        var image = surfaceObj.GetComponent<Image>();
+        image.color = PanelSurfaceColor;
+        image.raycastTarget = false;
+
+        var outline = surfaceObj.GetComponent<Outline>();
+        outline.effectColor = new Color(0.27f, 0.16f, 0.08f, 0.42f);
+        outline.effectDistance = new Vector2(2f, -2f);
+        outline.useGraphicAlpha = false;
     }
 
     private Text CreateLabel(Transform parent, string name, Vector2 anchor, Vector2 size, int fontSize, Color color, string value, FontStyle style = FontStyle.Normal)
@@ -927,13 +1035,16 @@ public class MainMenuAuthController : MonoBehaviour
         text.alignment = TextAnchor.MiddleCenter;
         text.color = color;
         text.text = value;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        text.raycastTarget = false;
 
         return text;
     }
 
     private Button CreateButton(Transform parent, string name, string label, Vector2 anchor, Vector2 size, Color tint, UnityAction onClick)
     {
-        var buttonObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        var buttonObj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(Outline));
         buttonObj.transform.SetParent(parent, false);
 
         var rect = buttonObj.GetComponent<RectTransform>();
@@ -945,7 +1056,25 @@ public class MainMenuAuthController : MonoBehaviour
         var image = buttonObj.GetComponent<Image>();
         image.color = tint;
 
+        var outline = buttonObj.GetComponent<Outline>();
+        outline.effectColor = FrameColor;
+        outline.effectDistance = new Vector2(3f, -3f);
+        outline.useGraphicAlpha = false;
+
+        var shadow = buttonObj.AddComponent<Shadow>();
+        shadow.effectColor = new Color(0.10f, 0.06f, 0.03f, 0.42f);
+        shadow.effectDistance = new Vector2(4f, -4f);
+        shadow.useGraphicAlpha = false;
+
         var button = buttonObj.GetComponent<Button>();
+        button.transition = Selectable.Transition.ColorTint;
+        var colors = button.colors;
+        colors.normalColor = Color.white;
+        colors.highlightedColor = new Color(1f, 0.97f, 0.86f, 1f);
+        colors.pressedColor = new Color(0.82f, 0.78f, 0.68f, 1f);
+        colors.disabledColor = new Color(0.43f, 0.36f, 0.28f, 0.62f);
+        colors.fadeDuration = 0.08f;
+        button.colors = colors;
         button.onClick.AddListener(onClick);
 
         var textObj = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
@@ -960,10 +1089,67 @@ public class MainMenuAuthController : MonoBehaviour
         var text = textObj.GetComponent<Text>();
         text.text = label;
         text.font = panelFont;
-        text.fontSize = 32;
+        text.fontSize = 23;
+        text.fontStyle = FontStyle.Bold;
         text.alignment = TextAnchor.MiddleCenter;
-        text.color = Color.black;
+        text.color = ButtonTextColor;
+        text.horizontalOverflow = HorizontalWrapMode.Wrap;
+        text.verticalOverflow = VerticalWrapMode.Truncate;
+        text.raycastTarget = false;
+        AddTextShadow(text, new Color(0.08f, 0.04f, 0.02f, 0.72f), new Vector2(1.5f, -1.5f));
 
         return button;
+    }
+
+    private static void AddTextShadow(Text text, Color color, Vector2 distance)
+    {
+        if (text == null) return;
+
+        var shadow = text.gameObject.AddComponent<Shadow>();
+        shadow.effectColor = color;
+        shadow.effectDistance = distance;
+        shadow.useGraphicAlpha = false;
+    }
+
+    private static Font ResolvePanelFont(Font currentFont, Font managerFont)
+    {
+        if (IsPreferredPanelFont(currentFont)) return currentFont;
+        if (IsPreferredPanelFont(managerFont)) return managerFont;
+
+#if UNITY_EDITOR
+        Font editorFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/BMYEONSUNG_ttf.ttf");
+        if (editorFont != null) return editorFont;
+#endif
+
+        Font loadedFont = FindLoadedFont("BMYEONSUNG_ttf");
+        if (loadedFont == null) loadedFont = FindLoadedFont("BMYEONSUNG");
+        if (loadedFont != null) return loadedFont;
+
+        Font resourceFont = Resources.Load<Font>("BMYEONSUNG_ttf");
+        if (resourceFont == null) resourceFont = Resources.Load<Font>("BMYEONSUNG");
+        if (resourceFont != null) return resourceFont;
+
+        if (managerFont != null) return managerFont;
+        if (currentFont != null) return currentFont;
+        return Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+    }
+
+    private static Font FindLoadedFont(string fontNamePart)
+    {
+        Font[] loadedFonts = Resources.FindObjectsOfTypeAll<Font>();
+        foreach (Font loadedFont in loadedFonts)
+        {
+            if (loadedFont != null && loadedFont.name.IndexOf(fontNamePart, StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return loadedFont;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsPreferredPanelFont(Font font)
+    {
+        return font != null && font.name.IndexOf("BMYEONSUNG", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }

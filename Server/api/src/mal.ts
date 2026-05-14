@@ -216,6 +216,21 @@ export async function fetchTopAnimePage(params: { clientId: string; limit: numbe
   };
 }
 
+export async function fetchAnimeSuggestions(params: { clientId: string; accessToken: string; limit: number; offset: number }) {
+  const url = `${MAL_API_BASE}/anime/suggestions?limit=${params.limit}&offset=${params.offset}&fields=${encodeURIComponent(ANIME_FIELDS)}`;
+  const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId, params.accessToken) });
+  if (!response.ok) throw new Error(`MAL suggestions request failed: ${response.status}`);
+  const payload = (await response.json()) as { data: { node: MalAnimeNode }[]; paging?: { next?: string } };
+  return {
+    ...payload,
+    data: await enrichAnimeEntries({
+      clientId: params.clientId,
+      accessToken: params.accessToken,
+      entries: payload.data ?? [],
+    }),
+  };
+}
+
 export async function fetchAnimeDetails(params: { clientId: string; animeId: number; accessToken?: string }) {
   const url = `${MAL_API_BASE}/anime/${params.animeId}?fields=${encodeURIComponent(ANIME_FIELDS)}`;
   const response = await fetchWithRetry(url, { headers: authHeaders(params.clientId, params.accessToken) });

@@ -110,6 +110,31 @@ public class ApiClient : MonoBehaviour
         return req;
     }
 
+    private async Task EnsureApiSession()
+    {
+        var auth = NakamaAuthManager.Instance;
+        if (auth == null)
+        {
+            throw new Exception("Auth manager unavailable");
+        }
+
+        if (!auth.IsAuthenticated)
+        {
+            await auth.EnsureIncognitoSessionAsync();
+        }
+
+        if (!auth.IsAuthenticated || string.IsNullOrWhiteSpace(AuthToken))
+        {
+            throw new Exception("Unable to start an incognito session");
+        }
+    }
+
+    private async Task<UnityWebRequest> CreateApiRequest(string url, string method, string jsonBody = null)
+    {
+        await EnsureApiSession();
+        return CreateRequest(url, method, jsonBody);
+    }
+
     public async Task PostClientLog(string level, string action, string details = null, string message = null, string timestamp = null)
     {
         var body = JsonUtility.ToJson(new ClientLogBody
@@ -129,7 +154,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> PostEnsureMe()
     {
-        var req = CreateRequest($"{baseUrl}/api/me/ensure", UnityWebRequest.kHttpVerbPOST, "{}");
+        var req = await CreateApiRequest($"{baseUrl}/api/me/ensure", UnityWebRequest.kHttpVerbPOST, "{}");
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -179,8 +204,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> GetAnime(string q = "", int limit = 100, int offset = 0)
     {
         string url = $"{baseUrl}/api/anime?q={UnityWebRequest.EscapeURL(q)}&limit={limit}&offset={offset}";
-        bool includeAuth = NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsAuthenticated;
-        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET, includeAuth: includeAuth);
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -192,7 +216,31 @@ public class ApiClient : MonoBehaviour
     public async Task<string> GetUserAnime(string q = "", int limit = 100, int offset = 0)
     {
         string url = $"{baseUrl}/api/anime/user?q={UnityWebRequest.EscapeURL(q)}&limit={limit}&offset={offset}";
-        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> GetAnimeByGenre(string genre, string q = "", int limit = 100, int offset = 0)
+    {
+        string url = $"{baseUrl}/api/anime/genre/{UnityWebRequest.EscapeURL(genre)}?q={UnityWebRequest.EscapeURL(q)}&limit={limit}&offset={offset}";
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
+        await req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+            throw new Exception(req.error + " | " + req.downloadHandler.text);
+
+        return req.downloadHandler.text;
+    }
+
+    public async Task<string> GetAnimeSuggestions(int limit = 20, int offset = 0)
+    {
+        string url = $"{baseUrl}/api/anime/suggestions?limit={limit}&offset={offset}";
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -204,7 +252,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> GetAnimeMatches(string q = "", int limit = 100)
     {
         string url = $"{baseUrl}/api/anime/matches?q={UnityWebRequest.EscapeURL(q)}&limit={limit}";
-        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -216,7 +264,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> GetAnimeDetails(string animeId)
     {
         string url = $"{baseUrl}/api/anime/{UnityWebRequest.EscapeURL(animeId)}/details";
-        var req = CreateRequest(url, UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest(url, UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -227,7 +275,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> GetQuests()
     {
-        var req = CreateRequest($"{baseUrl}/api/quests", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/quests", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -238,7 +286,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> ClaimQuest(string code)
     {
-        var req = CreateRequest($"{baseUrl}/api/quests/{UnityWebRequest.EscapeURL(code)}/claim", UnityWebRequest.kHttpVerbPOST, "{}");
+        var req = await CreateApiRequest($"{baseUrl}/api/quests/{UnityWebRequest.EscapeURL(code)}/claim", UnityWebRequest.kHttpVerbPOST, "{}");
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -249,7 +297,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> GetCharacterProgression()
     {
-        var req = CreateRequest($"{baseUrl}/api/characters", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/characters", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -261,7 +309,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> SelectCharacter(string characterKey, string robotColor = null)
     {
         string body = JsonUtility.ToJson(new CharacterSelectBody { characterKey = characterKey, robotColor = robotColor });
-        var req = CreateRequest($"{baseUrl}/api/characters/select", UnityWebRequest.kHttpVerbPOST, body);
+        var req = await CreateApiRequest($"{baseUrl}/api/characters/select", UnityWebRequest.kHttpVerbPOST, body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -272,7 +320,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> GetTable(string tableName, int limit = 50, int offset = 0)
     {
-        var req = CreateRequest($"{baseUrl}/api/table/{tableName}?limit={limit}&offset={offset}", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/table/{tableName}?limit={limit}&offset={offset}", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -284,7 +332,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> PatchWatching(string animeId, bool isWatching)
     {
         string body = JsonUtility.ToJson(new WatchingPatchBody { isWatching = isWatching });
-        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/watching", "PATCH", body);
+        var req = await CreateApiRequest($"{baseUrl}/api/anime/{animeId}/watching", "PATCH", body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -296,7 +344,7 @@ public class ApiClient : MonoBehaviour
     public async Task<string> PatchLists(string animeId, string[] add, string[] remove)
     {
         string body = JsonUtility.ToJson(new ListsPatchBody { add = add ?? Array.Empty<string>(), remove = remove ?? Array.Empty<string>() });
-        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/lists", "PATCH", body);
+        var req = await CreateApiRequest($"{baseUrl}/api/anime/{animeId}/lists", "PATCH", body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -313,7 +361,7 @@ public class ApiClient : MonoBehaviour
             score = score,
             episodesWatched = episodesWatched,
         });
-        var req = CreateRequest($"{baseUrl}/api/anime/{animeId}/progress", "PATCH", body);
+        var req = await CreateApiRequest($"{baseUrl}/api/anime/{animeId}/progress", "PATCH", body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -324,7 +372,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<PlayerStateResponse> GetPlayerState()
     {
-        var req = CreateRequest($"{baseUrl}/api/player/state", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/player/state", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -342,7 +390,7 @@ public class ApiClient : MonoBehaviour
             z = position.z,
             rotationY = rotationY,
         });
-        var req = CreateRequest($"{baseUrl}/api/player/state", "PATCH", body);
+        var req = await CreateApiRequest($"{baseUrl}/api/player/state", "PATCH", body);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -353,7 +401,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> StartMyAnimeListLink()
     {
-        var req = CreateRequest($"{baseUrl}/api/mal/oauth/start", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/mal/oauth/start", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -368,7 +416,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<MalOAuthStatusResponse> GetMyAnimeListOAuthStatus()
     {
-        var req = CreateRequest($"{baseUrl}/api/mal/oauth/status", UnityWebRequest.kHttpVerbGET);
+        var req = await CreateApiRequest($"{baseUrl}/api/mal/oauth/status", UnityWebRequest.kHttpVerbGET);
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
@@ -379,7 +427,7 @@ public class ApiClient : MonoBehaviour
 
     public async Task<string> ImportMyAnimeList()
     {
-        var req = CreateRequest($"{baseUrl}/api/mal/import", UnityWebRequest.kHttpVerbPOST, "{}");
+        var req = await CreateApiRequest($"{baseUrl}/api/mal/import", UnityWebRequest.kHttpVerbPOST, "{}");
         await req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)

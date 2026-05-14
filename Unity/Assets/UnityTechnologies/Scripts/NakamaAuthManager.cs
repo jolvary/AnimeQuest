@@ -30,6 +30,8 @@ public class NakamaAuthManager : MonoBehaviour
     private float _socketConnectDeadlineAt;
     private string _socketConnectSource;
     private int _socketConnectTimeoutMs;
+    private Task _incognitoLoginTask;
+    private int _authAttemptId;
 
     private void Awake()
     {
@@ -52,12 +54,15 @@ public class NakamaAuthManager : MonoBehaviour
     public async Task LoginDeviceAsync()
     {
         EnsureClient();
-        BeginNewAuthSession();
+        int authAttemptId = BeginNewAuthSession();
 
         try
         {
             string deviceId = ResolveDeviceId();
-            Session = await Client.AuthenticateDeviceAsync(deviceId, null, true);
+            var session = await Client.AuthenticateDeviceAsync(deviceId, null, true);
+            if (!IsCurrentAuthAttempt(authAttemptId)) return;
+
+            Session = session;
             IsIncognitoSession = true;
             PersistSession();
             StartSocketConnectInBackground("device");
@@ -65,15 +70,45 @@ public class NakamaAuthManager : MonoBehaviour
         }
         catch
         {
-            ClearSessionState();
+            if (IsCurrentAuthAttempt(authAttemptId))
+            {
+                ClearSessionState();
+            }
             throw;
+        }
+    }
+
+    public async Task EnsureIncognitoSessionAsync()
+    {
+        if (IsAuthenticated)
+        {
+            return;
+        }
+
+        if (_incognitoLoginTask != null && !_incognitoLoginTask.IsCompleted)
+        {
+            await _incognitoLoginTask;
+            return;
+        }
+
+        _incognitoLoginTask = LoginDeviceAsync();
+        try
+        {
+            await _incognitoLoginTask;
+        }
+        finally
+        {
+            if (_incognitoLoginTask != null && _incognitoLoginTask.IsCompleted)
+            {
+                _incognitoLoginTask = null;
+            }
         }
     }
 
     public async Task RegisterAsync(string username, string password)
     {
         EnsureClient();
-        BeginNewAuthSession();
+        int authAttemptId = BeginNewAuthSession();
 
         string email = ToPseudoEmail(username);
 
@@ -89,7 +124,10 @@ public class NakamaAuthManager : MonoBehaviour
 
         try
         {
-            Session = await Client.AuthenticateEmailAsync(email, password, username, create: true);
+            var session = await Client.AuthenticateEmailAsync(email, password, username, create: true);
+            if (!IsCurrentAuthAttempt(authAttemptId)) return;
+
+            Session = session;
             IsIncognitoSession = false;
             PersistSession();
             StartSocketConnectInBackground("register");
@@ -97,7 +135,10 @@ public class NakamaAuthManager : MonoBehaviour
         }
         catch
         {
-            ClearSessionState();
+            if (IsCurrentAuthAttempt(authAttemptId))
+            {
+                ClearSessionState();
+            }
             throw;
         }
     }
@@ -105,6 +146,8 @@ public class NakamaAuthManager : MonoBehaviour
 
     public async Task LogoutAsync()
     {
+        _authAttemptId++;
+        _incognitoLoginTask = null;
         AbortPendingSocketConnect("logout", log: false);
         if (Socket != null)
         {
@@ -118,13 +161,16 @@ public class NakamaAuthManager : MonoBehaviour
     public async Task LoginAsync(string username, string password)
     {
         EnsureClient();
-        BeginNewAuthSession();
+        int authAttemptId = BeginNewAuthSession();
 
         string email = ToPseudoEmail(username);
 
         try
         {
-            Session = await Client.AuthenticateEmailAsync(email, password, username, create: false);
+            var session = await Client.AuthenticateEmailAsync(email, password, username, create: false);
+            if (!IsCurrentAuthAttempt(authAttemptId)) return;
+
+            Session = session;
             IsIncognitoSession = false;
             PersistSession();
             StartSocketConnectInBackground("login");
@@ -132,7 +178,10 @@ public class NakamaAuthManager : MonoBehaviour
         }
         catch
         {
-            ClearSessionState();
+            if (IsCurrentAuthAttempt(authAttemptId))
+            {
+                ClearSessionState();
+            }
             throw;
         }
     }
@@ -281,8 +330,10 @@ public class NakamaAuthManager : MonoBehaviour
         return attemptId == _socketConnectAttemptId && ReferenceEquals(_socketConnectCompletion, completion);
     }
 
-    private void BeginNewAuthSession()
+    private int BeginNewAuthSession()
     {
+        int authAttemptId = ++_authAttemptId;
+        _incognitoLoginTask = null;
         AbortPendingSocketConnect("new-auth-session", log: false);
         IsConnectionReady = false;
 
@@ -291,6 +342,13 @@ public class NakamaAuthManager : MonoBehaviour
             TryCloseSocketInBackground(Socket);
             Socket = null;
         }
+
+        return authAttemptId;
+    }
+
+    private bool IsCurrentAuthAttempt(int authAttemptId)
+    {
+        return authAttemptId == _authAttemptId;
     }
 
     private void AbortPendingSocketConnect(string source, bool log)

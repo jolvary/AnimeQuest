@@ -46,11 +46,12 @@ public class GameBootstrap : MonoBehaviour
             return;
         }
 
-        mainMenuAuthController.gameObject.SetActive(true);
+        mainMenuAuthController.PrepareHidden();
         mainMenuAuthController.onLoginRequested.AddListener(HandleLoginRequested);
         mainMenuAuthController.onRegisterRequested.AddListener(HandleRegisterRequested);
         mainMenuAuthController.onIncognitoRequested.AddListener(HandleIncognitoRequested);
         mainMenuAuthController.onLogoutRequested.AddListener(HandleLogoutRequested);
+        EnsureIncognitoSessionInBackground("startup");
     }
 
     private void Update()
@@ -76,10 +77,6 @@ public class GameBootstrap : MonoBehaviour
 
         if (IsTextInputFocused()) return;
 
-        if (Keyboard.current.mKey.wasPressedThisFrame)
-        {
-            ToggleMainMenu();
-        }
     }
 
     private void ConfigureCameraCollisionIfNeeded(bool force)
@@ -192,6 +189,7 @@ public class GameBootstrap : MonoBehaviour
                 : "Login failed: " + ex.Message;
             DozzleLogger.Error("Handle login failed", ex);
             mainMenuAuthController?.SetLoginStatus(message);
+            EnsureIncognitoSessionInBackground("login-failed");
         }
     }
 
@@ -212,6 +210,7 @@ public class GameBootstrap : MonoBehaviour
                 : "Register failed: " + ex.Message;
             DozzleLogger.Error("Handle register failed", ex);
             mainMenuAuthController?.SetRegisterStatus(message);
+            EnsureIncognitoSessionInBackground("register-failed");
         }
     }
 
@@ -221,15 +220,15 @@ public class GameBootstrap : MonoBehaviour
         DozzleLogger.Action("Handle incognito");
         try
         {
-            if (NakamaAuthManager.Instance != null && !NakamaAuthManager.Instance.IsAuthenticated)
+            if (NakamaAuthManager.Instance == null)
             {
-                await NakamaAuthManager.Instance.LoginDeviceAsync();
-                EnsureBackendUserInBackground("incognito");
+                throw new Exception("Auth manager unavailable");
             }
 
-            mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(true);
-            mainMenuAuthController?.userCatalogPanelController?.SetIncognitoMode(true);
-            uiManager?.OpenAnimePanel();
+            await NakamaAuthManager.Instance.EnsureIncognitoSessionAsync();
+            SetCatalogIncognitoMode(true);
+            EnsureBackendUserInBackground("incognito");
+            uiManager?.HideAll();
         }
         catch (Exception ex)
         {
@@ -241,6 +240,40 @@ public class GameBootstrap : MonoBehaviour
                 mainMenuAuthController.gameObject.SetActive(true);
                 mainMenuAuthController.ShowLoginPanel();
             }
+        }
+    }
+
+    private async void EnsureIncognitoSessionInBackground(string source)
+    {
+        var auth = NakamaAuthManager.Instance;
+        if (auth == null)
+        {
+            DozzleLogger.Error("Incognito session skipped", $"source={source};reason=auth-manager-unavailable");
+            return;
+        }
+
+        if (auth.IsAuthenticated && !auth.IsIncognitoSession)
+        {
+            SetCatalogIncognitoMode(false);
+            return;
+        }
+
+        try
+        {
+            await auth.EnsureIncognitoSessionAsync();
+            bool isIncognito = auth.IsAuthenticated && auth.IsIncognitoSession;
+            SetCatalogIncognitoMode(isIncognito);
+
+            if (isIncognito)
+            {
+                DozzleLogger.Action("Incognito session ready", $"source={source}");
+                EnsureBackendUserInBackground($"incognito-{source}");
+            }
+        }
+        catch (Exception ex)
+        {
+            DozzleLogger.Error("Incognito session failed", ex);
+            uiManager?.ShowErrorAlert("Could not start incognito session: " + ex.Message);
         }
     }
 
@@ -263,6 +296,8 @@ public class GameBootstrap : MonoBehaviour
                 mainMenuAuthController.ShowLoginPanel();
                 mainMenuAuthController.SetLoginStatus("You have been logged out.");
             }
+
+            EnsureIncognitoSessionInBackground("logout");
         }
         catch (Exception ex)
         {
@@ -275,8 +310,7 @@ public class GameBootstrap : MonoBehaviour
     private void OpenAuthenticatedGame()
     {
         ResolveMainMenuController();
-        mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(false);
-        mainMenuAuthController?.userCatalogPanelController?.SetIncognitoMode(false);
+        SetCatalogIncognitoMode(false);
         mainMenuAuthController?.SetLoginStatus("Login successful.");
         mainMenuAuthController?.SetRegisterStatus("Account ready.");
 
@@ -287,7 +321,20 @@ public class GameBootstrap : MonoBehaviour
         }
 
         uiManager?.ConnectGlobalChatRoom();
-        uiManager?.OpenAnimePanel();
+    }
+
+    private void SetCatalogIncognitoMode(bool enabled)
+    {
+        ResolveMainMenuController();
+        if (uiManager == null)
+        {
+            uiManager = FindFirstObjectByType<UIManager>(FindObjectsInactive.Include);
+        }
+
+        mainMenuAuthController?.animeCatalogPanelController?.SetIncognitoMode(enabled);
+        mainMenuAuthController?.userCatalogPanelController?.SetIncognitoMode(enabled);
+        uiManager?.animeCatalogPanelController?.SetIncognitoMode(enabled);
+        uiManager?.userCatalogPanelController?.SetIncognitoMode(enabled);
     }
 
     private async void EnsureBackendUserInBackground(string source)
@@ -423,6 +470,8 @@ public class GameBootstrap : MonoBehaviour
             mainMenuAuthController.ShowLoginPanel();
             mainMenuAuthController.SetLoginStatus(status);
         }
+
+        EnsureIncognitoSessionInBackground("forced-logout");
     }
 
     private void ApplyPanelSafeAreaLayout()

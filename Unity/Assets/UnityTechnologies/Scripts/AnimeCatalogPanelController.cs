@@ -6,6 +6,14 @@ using UnityEngine.UI;
 
 public class AnimeCatalogPanelController : MonoBehaviour
 {
+    public enum CatalogSource
+    {
+        Global,
+        User,
+        Genre,
+        Suggestions
+    }
+
     private const float EpisodeStepperHeight = 28f;
     private const float EpisodeButtonWidth = 28f;
     private const float EpisodeButtonHeight = 26f;
@@ -22,6 +30,8 @@ public class AnimeCatalogPanelController : MonoBehaviour
     public string defaultSearch = "";
     public int defaultLimit = 100;
     public bool userCatalogOnly;
+    public CatalogSource catalogSource = CatalogSource.Global;
+    public string catalogGenre = "";
     public Font preferredFont;
 
     private Text _descriptionText;
@@ -38,6 +48,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
     private int _currentOffset;
     private bool _hasNextPage;
     private UIManager _uiManager;
+    private bool IsIncognitoMode => _isIncognitoMode || (NakamaAuthManager.Instance != null && NakamaAuthManager.Instance.IsIncognitoSession);
 
     public void Configure(UIManager uiManager, Font font)
     {
@@ -65,6 +76,41 @@ public class AnimeCatalogPanelController : MonoBehaviour
         }
     }
 
+    public void UseGlobalCatalog()
+    {
+        SetCatalogSource(CatalogSource.Global, null, false);
+    }
+
+    public void UseUserCatalog()
+    {
+        SetCatalogSource(CatalogSource.User, null, false);
+    }
+
+    public void UseGenreCatalog(string genre)
+    {
+        SetCatalogSource(CatalogSource.Genre, genre, true);
+    }
+
+    public void UseSuggestedCatalog()
+    {
+        SetCatalogSource(CatalogSource.Suggestions, null, true);
+        defaultLimit = 20;
+    }
+
+    private void SetCatalogSource(CatalogSource source, string genre, bool clearSearch)
+    {
+        catalogSource = source;
+        userCatalogOnly = source == CatalogSource.User;
+        catalogGenre = genre ?? string.Empty;
+        _currentOffset = 0;
+        _hasNextPage = false;
+        if (clearSearch)
+        {
+            defaultSearch = string.Empty;
+            if (_searchInput != null) _searchInput.text = string.Empty;
+        }
+    }
+
     public async void RefreshCatalog()
     {
         EnsureDeckElements();
@@ -74,13 +120,11 @@ public class AnimeCatalogPanelController : MonoBehaviour
         {
             _searchInput.text = defaultSearch ?? string.Empty;
         }
-        _statusText.text = userCatalogOnly ? "Loading your anime catalog..." : "Loading MyAnimeList catalog...";
+        _statusText.text = BuildLoadingText();
 
         try
         {
-            string json = userCatalogOnly
-                ? await ApiClient.Instance.GetUserAnime(defaultSearch, pageSize, _currentOffset)
-                : await ApiClient.Instance.GetAnime(defaultSearch, pageSize, _currentOffset);
+            string json = await LoadCatalogJson(pageSize);
             var response = JsonUtility.FromJson<AnimeDeckResponse>(json);
             _hasNextPage = response != null && response.hasMore;
             UpdatePaginationControls();
@@ -89,9 +133,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
             {
                 _statusText.text = _currentOffset > 0
                     ? "No anime found on this page."
-                    : userCatalogOnly
-                        ? "No user anime yet. Link and import MyAnimeList first."
-                        : "No anime found.";
+                    : BuildEmptyText();
                 ClearCards();
                 return;
             }
@@ -100,33 +142,121 @@ public class AnimeCatalogPanelController : MonoBehaviour
             RenderActionVisibility();
             int firstItem = _currentOffset + 1;
             int lastItem = _currentOffset + response.items.Length;
-            _statusText.text = userCatalogOnly
-                ? $"Showing {firstItem}-{lastItem} from your catalog."
-                : $"Showing {firstItem}-{lastItem} MyAnimeList catalog entries.";
+            _statusText.text = BuildShowingText(firstItem, lastItem);
             ResetScrollToTop();
         }
         catch (Exception ex)
         {
-            _statusText.text = userCatalogOnly ? "Failed to load your anime catalog." : "Failed to load MyAnimeList catalog.";
+            _statusText.text = BuildFailureText();
             _hasNextPage = false;
             UpdatePaginationControls();
             ClearCards();
-            DozzleLogger.Error(userCatalogOnly ? "Failed to load user anime catalog" : "Failed to load anime catalog", ex);
+            DozzleLogger.Error(BuildFailureLogMessage(), ex);
         }
+    }
+
+    private async System.Threading.Tasks.Task<string> LoadCatalogJson(int pageSize)
+    {
+        if (ApiClient.Instance == null) throw new Exception("API client unavailable");
+
+        switch (EffectiveCatalogSource())
+        {
+            case CatalogSource.User:
+                return await ApiClient.Instance.GetUserAnime(defaultSearch, pageSize, _currentOffset);
+            case CatalogSource.Genre:
+                return await ApiClient.Instance.GetAnimeByGenre(catalogGenre, defaultSearch, pageSize, _currentOffset);
+            case CatalogSource.Suggestions:
+                return await ApiClient.Instance.GetAnimeSuggestions(pageSize, _currentOffset);
+            default:
+                return await ApiClient.Instance.GetAnime(defaultSearch, pageSize, _currentOffset);
+        }
+    }
+
+    private CatalogSource EffectiveCatalogSource()
+    {
+        return userCatalogOnly ? CatalogSource.User : catalogSource;
     }
 
     private string BuildDescriptionText()
     {
-        if (_isIncognitoMode)
+        CatalogSource source = EffectiveCatalogSource();
+        if (IsIncognitoMode)
         {
-            return userCatalogOnly
-                ? "Your Anime Catalog (Incognito): personal list actions are hidden."
-                : "MyAnimeList Catalog (Incognito): browse entries only. Personal anime list actions are hidden.";
+            if (source == CatalogSource.User) return "Your Anime Catalog (Incognito): personal list actions are hidden.";
+            return $"{CatalogTitle()} (Incognito): browse entries only. Personal anime list actions are hidden.";
         }
 
-        return userCatalogOnly
-            ? "Your Anime Catalog: anime imported or updated for this account."
-            : "MyAnimeList Catalog: all synced MAL titles with your status overlaid.";
+        switch (source)
+        {
+            case CatalogSource.User:
+                return "Your Anime Catalog: anime imported or updated for this account.";
+            case CatalogSource.Genre:
+                return $"{CatalogTitle()}: synced MAL titles in this genre with your status overlaid.";
+            case CatalogSource.Suggestions:
+                return "Suggested Anime: 20 personalized MAL suggestions based on your account.";
+            default:
+                return "MyAnimeList Catalog: all synced MAL titles with your status overlaid.";
+        }
+    }
+
+    private string CatalogTitle()
+    {
+        switch (EffectiveCatalogSource())
+        {
+            case CatalogSource.User:
+                return "Your Anime Catalog";
+            case CatalogSource.Genre:
+                return string.IsNullOrWhiteSpace(catalogGenre) ? "Genre Anime" : $"{catalogGenre.Trim()} Anime";
+            case CatalogSource.Suggestions:
+                return "Suggested Anime";
+            default:
+                return "MyAnimeList Catalog";
+        }
+    }
+
+    private string BuildLoadingText()
+    {
+        return $"Loading {CatalogTitle().ToLowerInvariant()}...";
+    }
+
+    private string BuildEmptyText()
+    {
+        switch (EffectiveCatalogSource())
+        {
+            case CatalogSource.User:
+                return "No user anime yet. Link and import MyAnimeList first.";
+            case CatalogSource.Genre:
+                return string.IsNullOrWhiteSpace(catalogGenre) ? "No anime found for this genre." : $"No {catalogGenre.Trim()} anime found.";
+            case CatalogSource.Suggestions:
+                return "No MAL suggestions found yet.";
+            default:
+                return "No anime found.";
+        }
+    }
+
+    private string BuildShowingText(int firstItem, int lastItem)
+    {
+        switch (EffectiveCatalogSource())
+        {
+            case CatalogSource.User:
+                return $"Showing {firstItem}-{lastItem} from your catalog.";
+            case CatalogSource.Genre:
+                return $"Showing {firstItem}-{lastItem} {CatalogTitle().ToLowerInvariant()} entries.";
+            case CatalogSource.Suggestions:
+                return $"Showing {firstItem}-{lastItem} MAL suggestions.";
+            default:
+                return $"Showing {firstItem}-{lastItem} MyAnimeList catalog entries.";
+        }
+    }
+
+    private string BuildFailureText()
+    {
+        return $"Failed to load {CatalogTitle().ToLowerInvariant()}.";
+    }
+
+    private string BuildFailureLogMessage()
+    {
+        return $"Failed to load {CatalogTitle()}";
     }
 
     private void EnsureDeckElements()
@@ -483,7 +613,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
         CreatePoster(item, row.transform);
         CreateInfoArea(item, row.transform);
-        if (!_isIncognitoMode)
+        if (!IsIncognitoMode)
         {
             CreateActionsArea(item, row.transform);
         }
@@ -918,7 +1048,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
 
     private async void UpdateAnimeProgress(AnimeDeckItem item, int score, int episodesWatched, string statusOverride = null)
     {
-        if (_isIncognitoMode || item == null || ApiClient.Instance == null) return;
+        if (IsIncognitoMode || item == null || ApiClient.Instance == null) return;
 
         int cap = item.episodes > 0 ? item.episodes : UnknownEpisodeCap;
         int nextEpisodesWatched = Mathf.Clamp(episodesWatched, 0, cap);
@@ -1002,7 +1132,7 @@ public class AnimeCatalogPanelController : MonoBehaviour
             var actions = _deckContent.GetChild(i).Find("Row/Actions");
             if (actions != null)
             {
-                actions.gameObject.SetActive(!_isIncognitoMode);
+                actions.gameObject.SetActive(!IsIncognitoMode);
             }
         }
     }

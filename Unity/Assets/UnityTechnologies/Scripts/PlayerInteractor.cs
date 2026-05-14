@@ -6,6 +6,7 @@ using System.Collections.Generic;
 public class PlayerInteractor : MonoBehaviour
 {
     private const float ContactTimeoutSeconds = 0.2f;
+    private const int MaxNearbyColliders = 64;
 
     [Header("References")]
     public Transform cam;
@@ -18,6 +19,7 @@ public class PlayerInteractor : MonoBehaviour
     private IInteractable current;
     private readonly Dictionary<Collider, float> _contactColliders = new Dictionary<Collider, float>();
     private readonly List<Collider> _staleContacts = new List<Collider>();
+    private readonly Collider[] _nearbyColliders = new Collider[MaxNearbyColliders];
 
     private void Awake()
     {
@@ -50,18 +52,54 @@ public class PlayerInteractor : MonoBehaviour
         current = null;
 
         PruneStaleContacts();
-        foreach (var collider in _contactColliders.Keys)
+        current = FindBestInteractable();
+        if (current != null)
         {
-            var interactable = collider.GetComponentInParent<IInteractable>();
-            if (interactable != null)
-            {
-                current = interactable;
-                SetPrompt(true, current.GetPrompt());
-                return;
-            }
+            SetPrompt(true, current.GetPrompt());
+            return;
         }
 
         SetPrompt(false, "");
+    }
+
+    private IInteractable FindBestInteractable()
+    {
+        IInteractable best = null;
+        float bestSqrDistance = float.PositiveInfinity;
+
+        foreach (var collider in _contactColliders.Keys)
+        {
+            ConsiderInteractableCollider(collider, ref best, ref bestSqrDistance);
+        }
+
+        float radius = Mathf.Max(0.1f, interactDistance);
+        int count = Physics.OverlapSphereNonAlloc(
+            transform.position,
+            radius,
+            _nearbyColliders,
+            EffectiveInteractMask(),
+            QueryTriggerInteraction.Collide
+        );
+
+        for (int i = 0; i < count; i++)
+        {
+            ConsiderInteractableCollider(_nearbyColliders[i], ref best, ref bestSqrDistance);
+        }
+
+        return best;
+    }
+
+    private void ConsiderInteractableCollider(Collider other, ref IInteractable best, ref float bestSqrDistance)
+    {
+        var interactable = ResolveInteractable(other);
+        if (interactable == null) return;
+
+        Vector3 closestPoint = other.ClosestPoint(transform.position);
+        float sqrDistance = (closestPoint - transform.position).sqrMagnitude;
+        if (sqrDistance >= bestSqrDistance) return;
+
+        best = interactable;
+        bestSqrDistance = sqrDistance;
     }
 
     private void OnTriggerEnter(Collider other)
@@ -101,11 +139,22 @@ public class PlayerInteractor : MonoBehaviour
 
     private void AddInteractableCollider(Collider other)
     {
-        if (other == null) return;
-        if ((interactMask.value & (1 << other.gameObject.layer)) == 0) return;
-        if (other.GetComponentInParent<IInteractable>() == null) return;
+        if (ResolveInteractable(other) == null) return;
 
         _contactColliders[other] = Time.unscaledTime;
+    }
+
+    private IInteractable ResolveInteractable(Collider other)
+    {
+        if (other == null || !other.enabled || !other.gameObject.activeInHierarchy) return null;
+        if ((EffectiveInteractMask() & (1 << other.gameObject.layer)) == 0) return null;
+
+        return other.GetComponentInParent<IInteractable>();
+    }
+
+    private int EffectiveInteractMask()
+    {
+        return interactMask.value == 0 ? ~0 : interactMask.value;
     }
 
     private void PruneStaleContacts()

@@ -105,7 +105,7 @@ public class CharacterPanelController : MonoBehaviour
     {
         if (_titleText == null)
         {
-            _titleText = CreateTextElement("CharacterTitle", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(70f, -102f), new Vector2(-70f, -54f), 25, FontStyle.Bold);
+            _titleText = CreateTextElement("CharacterTitle", new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(70f, -124f), new Vector2(-70f, -76f), 25, FontStyle.Bold);
             _titleText.text = "Characters";
             _titleText.alignment = TextAnchor.MiddleLeft;
         }
