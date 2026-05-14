@@ -39,6 +39,10 @@ model Anime {
   provider         String
   providerId       String   @map("provider_id")
   title            String
+  titleEnglish     String?  @map("title_english")
+  titleJapanese    String?  @map("title_japanese")
+  titleSpanish     String?  @map("title_spanish")
+  titleSynonyms    String[] @default([]) @map("title_synonyms")
   imageUrl         String?  @map("image_url")
   synopsis         String?  @db.Text
   genres           String[] @default([])

@@ -1,6 +1,11 @@
 export type MalAnimeNode = {
   id: number;
   title: string;
+  alternative_titles?: {
+    synonyms?: string[];
+    en?: string;
+    ja?: string;
+  };
   genres?: { name: string }[];
   num_episodes?: number;
   start_season?: { year?: number };
@@ -56,6 +61,7 @@ const EXTERNAL_FETCH_MAX_ATTEMPTS = 4;
 const ANIME_FIELDS = [
   "id",
   "title",
+  "alternative_titles",
   "main_picture",
   "synopsis",
   "mean",
@@ -165,6 +171,7 @@ function mergeAnimeDetails(base: MalAnimeNode, details: MalAnimeNode): MalAnimeN
     ...base,
     ...details,
     main_picture: details.main_picture ?? base.main_picture,
+    alternative_titles: details.alternative_titles ?? base.alternative_titles,
     synopsis: details.synopsis ?? base.synopsis,
     genres: details.genres ?? base.genres,
     num_episodes: details.num_episodes ?? base.num_episodes,

@@ -55,7 +55,7 @@ PrefabInstance:
     - target: {fileID: 5866666021909216657, guid: 5c84b49838c1acd4cbe63ecc028d64fe, type: 3}
       propertyPath: m_Controller
       value: 
-      objectReference: {fileID: 9100000, guid: 34d4ca67ae6047348bb81e216d315b82, type: 2}
+      objectReference: {fileID: 9100000, guid: bf3b17eef38e0274eacd55b73dc5e07c, type: 2}
     - target: {fileID: 5866666021909216657, guid: 5c84b49838c1acd4cbe63ecc028d64fe, type: 3}
       propertyPath: m_ApplyRootMotion
       value: 0
@@ -85,4 +85,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 54f141628068b9b4493f69f797f003b2, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  DemoMode: 1
+  AutoPlayAnimations: 1
+  PaletteOverride: {fileID: 0}

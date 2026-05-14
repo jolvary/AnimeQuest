@@ -58,6 +58,7 @@ public class UIManager : MonoBehaviour
     private readonly Dictionary<string, int> _pendingChatNotificationsByChannel = new Dictionary<string, int>();
     private readonly object _chatNotificationLock = new object();
     private GameObject _mobileControls;
+    private PlayerInteractor _playerInteractor;
     private GameObject _webGlPointerLockOverlay;
     private bool _webGlPointerLockReady;
     private float _webGlPointerLockRequestedAt;
@@ -66,6 +67,7 @@ public class UIManager : MonoBehaviour
     private float _hideErrorAlertAt;
     private readonly Queue<string> _pendingErrorAlerts = new Queue<string>();
     private readonly object _pendingErrorAlertLock = new object();
+    private static Sprite _mobileCircleSprite;
 
     private void OnEnable()
     {
@@ -201,6 +203,19 @@ public class UIManager : MonoBehaviour
         {
             mapPanelController?.RefreshMap();
         }
+    }
+
+    public void OpenMainMenuPanel()
+    {
+        HideAll();
+
+        var mainMenu = FindFirstObjectByType<MainMenuAuthController>(FindObjectsInactive.Include);
+        if (mainMenu != null)
+        {
+            mainMenu.ShowLoginPanel();
+        }
+
+        RefreshCursorState();
     }
 
     public void OpenDialoguePanel(string speaker, string body, DialoguePanelController.DialogueOption[] options)
@@ -773,14 +788,15 @@ public class UIManager : MonoBehaviour
         titleText.raycastTarget = false;
 
         const float radius = 222f;
-        CreateWheelButton("Wheel_Anime", "Anime", 90f, radius, OpenAnimePanel);
-        CreateWheelButton("Wheel_UserCatalog", "My List", 45f, radius, OpenUserCatalogPanel);
-        CreateWheelButton("Wheel_Quests", "Quests", 0f, radius, OpenQuestsPanel);
-        CreateWheelButton("Wheel_Friends", "Friends", -45f, radius, OpenFriendsPanel);
-        _chatToolbarButton = CreateWheelButton("Wheel_Chat", "Chat", -90f, radius, OpenChatPanel);
-        CreateWheelButton("Wheel_Matching", "Matches", -135f, radius, OpenMatchingPanel);
-        CreateWheelButton("Wheel_Characters", "Chars", 180f, radius, OpenCharactersPanel);
-        CreateWheelButton("Wheel_Map", "Map", 135f, radius, OpenMapPanel);
+        CreateWheelButton("Wheel_MainMenu", "Menu", 90f, radius, OpenMainMenuPanel);
+        CreateWheelButton("Wheel_Anime", "Anime", 50f, radius, OpenAnimePanel);
+        CreateWheelButton("Wheel_UserCatalog", "My List", 10f, radius, OpenUserCatalogPanel);
+        CreateWheelButton("Wheel_Quests", "Quests", -30f, radius, OpenQuestsPanel);
+        CreateWheelButton("Wheel_Friends", "Friends", -70f, radius, OpenFriendsPanel);
+        _chatToolbarButton = CreateWheelButton("Wheel_Chat", "Chat", -110f, radius, OpenChatPanel);
+        CreateWheelButton("Wheel_Matching", "Matches", -150f, radius, OpenMatchingPanel);
+        CreateWheelButton("Wheel_Characters", "Chars", 170f, radius, OpenCharactersPanel);
+        CreateWheelButton("Wheel_Map", "Map", 130f, radius, OpenMapPanel);
         EnsureChatNotificationBadge();
         RefreshChatNotificationBadge();
 
@@ -837,6 +853,7 @@ public class UIManager : MonoBehaviour
         HideAll();
         if (shouldOpen && _panelWheelRoot != null)
         {
+            _panelWheelRoot.transform.SetAsLastSibling();
             _panelWheelRoot.SetActive(true);
         }
 
@@ -1003,21 +1020,25 @@ public class UIManager : MonoBehaviour
         rootRect.offsetMin = Vector2.zero;
         rootRect.offsetMax = Vector2.zero;
 
-        var moveBase = CreateTouchSurface("MoveStick", _mobileControls.transform, new Vector2(0f, 0f), new Vector2(138f, 138f), new Vector2(172f, 172f), new Color(0.12f, 0.07f, 0.03f, 0.24f));
-        var moveKnob = CreateTouchSurface("Knob", moveBase.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(72f, 72f), new Color(0.48f, 0.28f, 0.12f, 0.74f));
+        CreateMobileButton("PanelWheelButton", "Panels", new Vector2(0f, 1f), new Vector2(106f, -78f), new Vector2(146f, 70f), new Color(0.48f, 0.28f, 0.12f, 0.88f), TogglePanelWheel, false);
+
+        var moveBase = CreateTouchSurface("MoveStick", _mobileControls.transform, new Vector2(0f, 0f), new Vector2(146f, 146f), new Vector2(188f, 188f), new Color(0.12f, 0.07f, 0.03f, 0.24f));
+        var moveKnob = CreateTouchSurface("Knob", moveBase.transform, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(76f, 76f), new Color(0.48f, 0.28f, 0.12f, 0.74f));
         moveKnob.GetComponent<Image>().raycastTarget = false;
         var moveControl = moveBase.AddComponent<MobileMoveTouchControl>();
-        moveControl.Configure(playerInputs, moveKnob.GetComponent<RectTransform>(), 68f);
+        moveControl.Configure(playerInputs, moveKnob.GetComponent<RectTransform>(), 76f);
 
         var lookPad = CreateTouchSurface("LookPad", _mobileControls.transform, new Vector2(1f, 0f), new Vector2(-178f, 156f), new Vector2(270f, 220f), new Color(0.12f, 0.07f, 0.03f, 0.10f));
         var lookControl = lookPad.AddComponent<MobileLookTouchControl>();
         lookControl.Configure(playerInputs, 0.12f);
 
-        var jumpButton = CreateHoldButton("JumpButton", "J", new Vector2(1f, 0f), new Vector2(-88f, 94f), MobileHoldAction.Jump);
+        var jumpButton = CreateHoldButton("JumpButton", "J", new Vector2(1f, 0f), new Vector2(-104f, 222f), MobileHoldAction.Jump);
         jumpButton.transform.SetParent(_mobileControls.transform, false);
 
-        var sprintButton = CreateHoldButton("SprintButton", "S", new Vector2(1f, 0f), new Vector2(-178f, 64f), MobileHoldAction.Sprint);
+        var sprintButton = CreateHoldButton("SprintButton", "S", new Vector2(1f, 0f), new Vector2(-220f, 112f), MobileHoldAction.Sprint);
         sprintButton.transform.SetParent(_mobileControls.transform, false);
+
+        CreateMobileButton("InteractButton", "Talk", new Vector2(1f, 0f), new Vector2(-104f, 112f), new Vector2(96f, 96f), new Color(0.78f, 0.18f, 0.07f, 0.9f), TriggerMobileInteract, true);
 
         _mobileControls.SetActive(false);
     }
@@ -1063,8 +1084,98 @@ public class UIManager : MonoBehaviour
 
         var image = obj.GetComponent<Image>();
         image.color = color;
+        if (Mathf.Abs(size.x - size.y) < 0.1f)
+        {
+            image.sprite = GetMobileCircleSprite();
+            image.type = Image.Type.Simple;
+        }
 
         return obj;
+    }
+
+    private GameObject CreateMobileButton(string name, string label, Vector2 anchor, Vector2 position, Vector2 size, Color color, Action onClick, bool circular)
+    {
+        var obj = CreateTouchSurface(name, _mobileControls.transform, anchor, position, size, color);
+        if (!circular)
+        {
+            var image = obj.GetComponent<Image>();
+            image.sprite = null;
+        }
+
+        var button = obj.AddComponent<Button>();
+        button.transition = Selectable.Transition.ColorTint;
+        button.colors = CreateMobileButtonColors(color);
+        if (onClick != null)
+        {
+            button.onClick.AddListener(() => onClick());
+        }
+
+        var labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+        labelObject.transform.SetParent(obj.transform, false);
+        var labelRect = labelObject.GetComponent<RectTransform>();
+        labelRect.anchorMin = Vector2.zero;
+        labelRect.anchorMax = Vector2.one;
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        var text = labelObject.GetComponent<Text>();
+        text.text = label;
+        text.font = panelTitleFont != null ? panelTitleFont : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        text.alignment = TextAnchor.MiddleCenter;
+        text.fontSize = circular ? 22 : 24;
+        text.fontStyle = FontStyle.Bold;
+        text.color = Color.white;
+        text.raycastTarget = false;
+
+        return obj;
+    }
+
+    private static ColorBlock CreateMobileButtonColors(Color normal)
+    {
+        Color pressed = Color.Lerp(normal, Color.black, 0.22f);
+        Color highlighted = Color.Lerp(normal, Color.white, 0.12f);
+
+        var colors = ColorBlock.defaultColorBlock;
+        colors.normalColor = normal;
+        colors.highlightedColor = highlighted;
+        colors.pressedColor = pressed;
+        colors.selectedColor = highlighted;
+        colors.disabledColor = new Color(normal.r, normal.g, normal.b, 0.35f);
+        colors.colorMultiplier = 1f;
+        colors.fadeDuration = 0.08f;
+        return colors;
+    }
+
+    private static Sprite GetMobileCircleSprite()
+    {
+        if (_mobileCircleSprite != null) return _mobileCircleSprite;
+
+        const int size = 96;
+        var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+        {
+            name = "MobileCircleSprite",
+            wrapMode = TextureWrapMode.Clamp,
+            filterMode = FilterMode.Bilinear
+        };
+
+        var pixels = new Color32[size * size];
+        float center = (size - 1) * 0.5f;
+        float radius = center - 1f;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float distance = Vector2.Distance(new Vector2(x, y), new Vector2(center, center));
+                byte alpha = distance <= radius ? (byte)255 : (byte)0;
+                pixels[y * size + x] = new Color32(255, 255, 255, alpha);
+            }
+        }
+
+        texture.SetPixels32(pixels);
+        texture.Apply();
+        _mobileCircleSprite = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), size);
+        _mobileCircleSprite.name = "MobileCircleSprite";
+        return _mobileCircleSprite;
     }
 
     private GameObject CreateHoldButton(string name, string label, Vector2 anchor, Vector2 position, MobileHoldAction action)
@@ -1091,6 +1202,16 @@ public class UIManager : MonoBehaviour
         text.raycastTarget = false;
 
         return obj;
+    }
+
+    private void TriggerMobileInteract()
+    {
+        if (_playerInteractor == null)
+        {
+            _playerInteractor = FindFirstObjectByType<PlayerInteractor>(FindObjectsInactive.Exclude);
+        }
+
+        _playerInteractor?.TryInteract();
     }
 
     private void EnsureErrorAlert()
@@ -1299,9 +1420,20 @@ public class UIManager : MonoBehaviour
 
     private void RefreshOverlayVisibility(bool anyPanelOpen, bool mainMenuOpen)
     {
+        if (_playerInteractor == null)
+        {
+            _playerInteractor = FindFirstObjectByType<PlayerInteractor>(FindObjectsInactive.Exclude);
+        }
+        _playerInteractor?.SetPromptSuppressed(anyPanelOpen || mainMenuOpen);
+
         if (_mobileControls != null)
         {
-            _mobileControls.SetActive(ShouldUseMobileControls() && !mainMenuOpen && !anyPanelOpen);
+            bool showMobileControls = ShouldUseMobileControls() && !mainMenuOpen && !anyPanelOpen;
+            _mobileControls.SetActive(showMobileControls);
+            if (showMobileControls)
+            {
+                _mobileControls.transform.SetAsLastSibling();
+            }
         }
 
         RefreshWebGlPointerLockOverlay(anyPanelOpen, mainMenuOpen);

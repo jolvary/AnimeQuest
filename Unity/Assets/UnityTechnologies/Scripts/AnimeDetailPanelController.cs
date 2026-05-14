@@ -766,6 +766,10 @@ public class AnimeDetailPanelController : MonoBehaviour
     {
         public string id;
         public string title;
+        public string titleEnglish;
+        public string titleJapanese;
+        public string titleSpanish;
+        public string[] titleSynonyms;
         public string briefDescription;
         public string description;
         public string imageUrl;

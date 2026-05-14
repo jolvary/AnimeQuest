@@ -22,6 +22,10 @@ public class NakamaAuthManager : MonoBehaviour
     [SerializeField] private int port = 7350;
     [SerializeField] private string serverKey = "defaultkey";
     [SerializeField] private bool autoResolveLocalhost = true;
+    [SerializeField] private string androidDeviceHostOverride = "";
+    [SerializeField] private string androidPublicScheme = "https";
+    [SerializeField] private string androidPublicHost = "";
+    [SerializeField] private int androidPublicPort = 443;
 
     private Task<bool> _socketConnectTask;
     private TaskCompletionSource<bool> _socketConnectCompletion;
@@ -471,6 +475,13 @@ public class NakamaAuthManager : MonoBehaviour
 
     private void ResolveEndpointForRuntime()
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (TryApplyAndroidPublicEndpoint())
+        {
+            return;
+        }
+#endif
+
         if (!IsLocalhost(host)) return;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -483,7 +494,17 @@ public class NakamaAuthManager : MonoBehaviour
         }
 #endif
 
-        host = ResolveHostForRuntime(host);
+        host = ResolveHostForRuntime(host, androidDeviceHostOverride);
+    }
+
+    private bool TryApplyAndroidPublicEndpoint()
+    {
+        if (string.IsNullOrWhiteSpace(androidPublicHost)) return false;
+
+        scheme = string.IsNullOrWhiteSpace(androidPublicScheme) ? "https" : androidPublicScheme.Trim();
+        host = androidPublicHost.Trim();
+        port = androidPublicPort > 0 ? androidPublicPort : 443;
+        return true;
     }
 
     private static bool IsLocalhost(string configuredHost)
@@ -518,12 +539,13 @@ public class NakamaAuthManager : MonoBehaviour
     }
 #endif
 
-    private static string ResolveHostForRuntime(string configuredHost)
+    private static string ResolveHostForRuntime(string configuredHost, string androidHostOverride)
     {
         if (!string.Equals(configuredHost, "localhost", StringComparison.OrdinalIgnoreCase)) return configuredHost;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-        return "10.0.2.2";
+        string runtimeHost = string.IsNullOrWhiteSpace(androidHostOverride) ? null : androidHostOverride.Trim();
+        return string.IsNullOrWhiteSpace(runtimeHost) ? "10.0.2.2" : runtimeHost;
 #else
         return "127.0.0.1";
 #endif

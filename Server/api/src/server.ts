@@ -54,6 +54,10 @@ type TableRow = Record<string, unknown>;
 type AnimeDeckSourceRow = {
   animeId: string;
   title: string;
+  titleEnglish: string | null;
+  titleJapanese: string | null;
+  titleSpanish: string | null;
+  titleSynonyms: string[];
   imageUrl: string | null;
   synopsis: string | null;
   year: number | null;
@@ -72,6 +76,10 @@ type AnimeListRow = Prisma.AnimeGetPayload<{
   select: {
     animeId: true;
     title: true;
+    titleEnglish: true;
+    titleJapanese: true;
+    titleSpanish: true;
+    titleSynonyms: true;
     imageUrl: true;
     synopsis: true;
     year: true;
@@ -175,6 +183,10 @@ const animeItemSchema = {
   properties: {
     id: { type: "string" },
     title: { type: "string" },
+    titleEnglish: stringOrNullSchema,
+    titleJapanese: stringOrNullSchema,
+    titleSpanish: stringOrNullSchema,
+    titleSynonyms: { type: "array", items: { type: "string" } },
     briefDescription: { type: "string" },
     description: { type: "string" },
     imageUrl: { type: "string" },
@@ -632,6 +644,10 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
 type AnimeDeckItem = {
   id: string;
   title: string;
+  titleEnglish: string | null;
+  titleJapanese: string | null;
+  titleSpanish: string | null;
+  titleSynonyms: string[];
   briefDescription: string;
   description: string;
   imageUrl: string;
@@ -679,6 +695,47 @@ function cleanMalSynopsis(value?: string | null) {
   if (!value) return null;
   const cleaned = value.replace(/\s*\[Written by MAL Rewrite\]\s*$/i, "").trim();
   return cleaned.length > 0 ? cleaned : null;
+}
+
+function cleanLocalizedTitle(value?: string | null) {
+  const cleaned = value?.trim();
+  return cleaned && cleaned.length > 0 ? cleaned : null;
+}
+
+function normalizeTitleForComparison(value?: string | null) {
+  return value?.trim().toLocaleLowerCase() ?? "";
+}
+
+function uniqueTitleList(values: (string | null | undefined)[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    const cleaned = cleanLocalizedTitle(value);
+    if (!cleaned) continue;
+
+    const key = normalizeTitleForComparison(cleaned);
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    result.push(cleaned);
+  }
+
+  return result;
+}
+
+function malLocalizedTitles(node: MalAnimeNode) {
+  const titleEnglish = cleanLocalizedTitle(node.alternative_titles?.en);
+  const titleJapanese = cleanLocalizedTitle(node.alternative_titles?.ja);
+  const titleKeys = new Set([
+    normalizeTitleForComparison(node.title),
+    normalizeTitleForComparison(titleEnglish),
+    normalizeTitleForComparison(titleJapanese),
+  ]);
+  const titleSynonyms = uniqueTitleList(node.alternative_titles?.synonyms ?? [])
+    .filter((title) => !titleKeys.has(normalizeTitleForComparison(title)));
+
+  return { titleEnglish, titleJapanese, titleSynonyms };
 }
 
 function malImageUrl(node: MalAnimeNode) {
@@ -735,8 +792,12 @@ function normalizeMalWatchStatus(value?: string): WatchStatus {
 }
 
 function animeUpsertData(node: MalAnimeNode) {
+  const localizedTitles = malLocalizedTitles(node);
   return {
     title: node.title,
+    titleEnglish: localizedTitles.titleEnglish,
+    titleJapanese: localizedTitles.titleJapanese,
+    titleSynonyms: localizedTitles.titleSynonyms,
     imageUrl: malImageUrl(node),
     synopsis: cleanMalSynopsis(node.synopsis),
     genres: (node.genres ?? []).map((g) => g.name),
@@ -788,6 +849,10 @@ function buildAnimeDeckItem(row: AnimeDeckSourceRow, watch?: AnimeWatchState | n
   return {
     id: row.animeId.toString(),
     title: row.title,
+    titleEnglish: row.titleEnglish,
+    titleJapanese: row.titleJapanese,
+    titleSpanish: row.titleSpanish,
+    titleSynonyms: row.titleSynonyms,
     briefDescription: buildBriefDescription(row),
     description: buildDescription(row),
     imageUrl: posterUrl(row),
@@ -881,6 +946,21 @@ function parseAnimeListQuery(query: { q?: string; limit?: string; offset?: strin
   const limit = Math.min(Math.max(requestedLimit, 1), MAX_ANIME_LIMIT);
   const offset = Math.max(requestedOffset, 0);
   return { q, limit, offset };
+}
+
+function animeTitleSearchWhere(q?: string): Prisma.AnimeWhereInput | undefined {
+  const value = q?.trim();
+  if (!value) return undefined;
+
+  return {
+    OR: [
+      { title: { contains: value, mode: "insensitive" } },
+      { titleEnglish: { contains: value, mode: "insensitive" } },
+      { titleJapanese: { contains: value, mode: "insensitive" } },
+      { titleSpanish: { contains: value, mode: "insensitive" } },
+      { titleSynonyms: { has: value } },
+    ],
+  };
 }
 
 async function resolveCanonicalAnimeGenre(ctx: AppContext, requestedGenre: string) {
@@ -1415,20 +1495,17 @@ export function buildServer(ctx: AppContext) {
     const { q, limit, offset } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
 
     const rows: AnimeListRow[] = await ctx.prisma.anime.findMany({
-      where: q
-        ? {
-            title: {
-              contains: q,
-              mode: "insensitive",
-            },
-          }
-        : undefined,
+      where: animeTitleSearchWhere(q),
       orderBy: { title: "asc" },
       skip: offset,
       take: limit + 1,
       select: {
         animeId: true,
         title: true,
+        titleEnglish: true,
+        titleJapanese: true,
+        titleSpanish: true,
+        titleSynonyms: true,
         imageUrl: true,
         synopsis: true,
         year: true,
@@ -1462,17 +1539,13 @@ export function buildServer(ctx: AppContext) {
     const { q, limit, offset } = parseAnimeListQuery(req.query as { q?: string; limit?: string; offset?: string });
     const genre = await resolveCanonicalAnimeGenre(ctx, decodeURIComponent(params.genre));
 
+    const titleSearch = animeTitleSearchWhere(q);
     const rows: AnimeListRow[] = await ctx.prisma.anime.findMany({
       where: {
-        genres: { has: genre },
-        ...(q
-          ? {
-              title: {
-                contains: q,
-                mode: "insensitive",
-              },
-            }
-          : {}),
+        AND: [
+          { genres: { has: genre } },
+          ...(titleSearch ? [titleSearch] : []),
+        ],
       },
       orderBy: { title: "asc" },
       skip: offset,
@@ -1480,6 +1553,10 @@ export function buildServer(ctx: AppContext) {
       select: {
         animeId: true,
         title: true,
+        titleEnglish: true,
+        titleJapanese: true,
+        titleSpanish: true,
+        titleSynonyms: true,
         imageUrl: true,
         synopsis: true,
         year: true,
@@ -1548,6 +1625,10 @@ export function buildServer(ctx: AppContext) {
       select: {
         animeId: true,
         title: true,
+        titleEnglish: true,
+        titleJapanese: true,
+        titleSpanish: true,
+        titleSynonyms: true,
         imageUrl: true,
         synopsis: true,
         year: true,
@@ -1588,6 +1669,10 @@ export function buildServer(ctx: AppContext) {
       select: {
         animeId: true,
         title: true,
+        titleEnglish: true,
+        titleJapanese: true,
+        titleSpanish: true,
+        titleSynonyms: true,
         imageUrl: true,
         synopsis: true,
         year: true,
@@ -1620,14 +1705,7 @@ export function buildServer(ctx: AppContext) {
     const rows = await ctx.prisma.watchEntry.findMany({
       where: {
         userId,
-        anime: q
-          ? {
-              title: {
-                contains: q,
-                mode: "insensitive",
-              },
-            }
-          : undefined,
+        anime: animeTitleSearchWhere(q),
       },
       orderBy: { updatedAt: "desc" },
       skip: offset,
@@ -1640,6 +1718,10 @@ export function buildServer(ctx: AppContext) {
           select: {
             animeId: true,
             title: true,
+            titleEnglish: true,
+            titleJapanese: true,
+            titleSpanish: true,
+            titleSynonyms: true,
             imageUrl: true,
             synopsis: true,
             year: true,
@@ -1671,14 +1753,7 @@ export function buildServer(ctx: AppContext) {
     const currentEntries = await ctx.prisma.watchEntry.findMany({
       where: {
         userId,
-        anime: q
-          ? {
-              title: {
-                contains: q,
-                mode: "insensitive",
-              },
-            }
-          : undefined,
+        anime: animeTitleSearchWhere(q),
       },
       select: {
         animeId: true,
@@ -1689,6 +1764,10 @@ export function buildServer(ctx: AppContext) {
           select: {
             animeId: true,
             title: true,
+            titleEnglish: true,
+            titleJapanese: true,
+            titleSpanish: true,
+            titleSynonyms: true,
             imageUrl: true,
             synopsis: true,
             year: true,

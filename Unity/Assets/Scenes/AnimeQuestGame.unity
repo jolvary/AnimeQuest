@@ -1145,6 +1145,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::ApiClient
   baseUrl: http://localhost:3000
   autoResolveLocalhost: 1
+  androidDeviceHostOverride: 
+  androidPublicBaseUrl: https://api.jolvary.com
 --- !u!114 &1293956294
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1162,6 +1164,10 @@ MonoBehaviour:
   port: 7350
   serverKey: devserverkey
   autoResolveLocalhost: 1
+  androidDeviceHostOverride: 
+  androidPublicScheme: https
+  androidPublicHost: nakama.jolvary.com
+  androidPublicPort: 443
 --- !u!114 &1293956295
 MonoBehaviour:
   m_ObjectHideFlags: 0

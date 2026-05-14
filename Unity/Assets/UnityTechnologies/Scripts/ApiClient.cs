@@ -12,6 +12,8 @@ public class ApiClient : MonoBehaviour
 
     [SerializeField] private string baseUrl = "http://localhost:3000";
     [SerializeField] private bool autoResolveLocalhost = true;
+    [SerializeField] private string androidDeviceHostOverride = "";
+    [SerializeField] private string androidPublicBaseUrl = "";
 
     private readonly string _clientInstanceId = Guid.NewGuid().ToString("N");
 
@@ -26,15 +28,23 @@ public class ApiClient : MonoBehaviour
 
         if (autoResolveLocalhost)
         {
-            baseUrl = ResolveBaseUrlForRuntime(baseUrl);
+            baseUrl = ResolveBaseUrlForRuntime(baseUrl, androidDeviceHostOverride, androidPublicBaseUrl);
         }
 
         DozzleLogger.Action("API base URL resolved", baseUrl);
         DozzleLogger.FlushPending();
     }
 
-    private static string ResolveBaseUrlForRuntime(string rawUrl)
+    private static string ResolveBaseUrlForRuntime(string rawUrl, string androidHostOverride, string androidBaseUrlOverride)
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        string androidPublicUrl = NormalizeUrlOverride(androidBaseUrlOverride);
+        if (!string.IsNullOrWhiteSpace(androidPublicUrl))
+        {
+            return androidPublicUrl;
+        }
+#endif
+
         if (!Uri.TryCreate(rawUrl, UriKind.Absolute, out var uri)) return rawUrl;
         if (!IsLocalhost(uri.Host)) return rawUrl;
 
@@ -46,12 +56,26 @@ public class ApiClient : MonoBehaviour
 #endif
 
 #if UNITY_ANDROID && !UNITY_EDITOR
-        string runtimeHost = "10.0.2.2";
+        string runtimeHost = NormalizeHostOverride(androidHostOverride);
+        if (string.IsNullOrWhiteSpace(runtimeHost))
+        {
+            runtimeHost = "10.0.2.2";
+        }
 #else
         string runtimeHost = "127.0.0.1";
 #endif
 
         return string.Format(CultureInfo.InvariantCulture, "{0}://{1}:{2}", uri.Scheme, runtimeHost, uri.Port);
+    }
+
+    private static string NormalizeHostOverride(string hostOverride)
+    {
+        return string.IsNullOrWhiteSpace(hostOverride) ? null : hostOverride.Trim();
+    }
+
+    private static string NormalizeUrlOverride(string urlOverride)
+    {
+        return string.IsNullOrWhiteSpace(urlOverride) ? null : urlOverride.Trim().TrimEnd('/');
     }
 
     private static bool IsLocalhost(string host)

@@ -563,17 +563,6 @@ function calculateQuestProgress(requirements: Record<string, unknown>, stats: { 
   return parts === 0 ? 1 : Math.min(total / parts, 1);
 }
 
-async function ensureAppSchema(prisma: PrismaClient) {
-  await prisma.$executeRawUnsafe('ALTER TABLE anime ADD COLUMN IF NOT EXISTS image_url TEXT');
-  await prisma.$executeRawUnsafe('ALTER TABLE anime ADD COLUMN IF NOT EXISTS synopsis TEXT');
-  await prisma.$executeRawUnsafe('ALTER TABLE users ADD COLUMN IF NOT EXISTS experience_points INT NOT NULL DEFAULT 0');
-  await prisma.$executeRawUnsafe('ALTER TABLE users ADD COLUMN IF NOT EXISTS level INT NOT NULL DEFAULT 1');
-  await prisma.$executeRawUnsafe('ALTER TABLE users ADD COLUMN IF NOT EXISTS coins INT NOT NULL DEFAULT 0');
-  await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS unlocked_characters TEXT[] NOT NULL DEFAULT ARRAY['robot_kyle']`);
-  await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS selected_character_key TEXT NOT NULL DEFAULT 'robot_kyle'`);
-  await prisma.$executeRawUnsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS robot_color TEXT NOT NULL DEFAULT 'default'`);
-}
-
 async function seedQuestCatalog(prisma: PrismaClient) {
   for (const quest of QUEST_CATALOG) {
     await prisma.quest.upsert({
@@ -1100,7 +1089,6 @@ async function main() {
   const nakamaHttp = mustGet('NAKAMA_HTTP');
   const nakamaServerKey = mustGet('NAKAMA_SERVER_KEY');
 
-  await ensureAppSchema(prisma);
   await seedQuestCatalog(prisma);
 
   const ctx: AppContext = {
