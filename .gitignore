@@ -45,6 +45,11 @@ yarn-error.log*
 pnpm-debug.log*
 
 # ======================
+# Cloudflare / Wrangler
+# ======================
+.wrangler/
+
+# ======================
 # Secrets / local config
 # ======================
 .env

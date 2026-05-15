@@ -154,10 +154,47 @@ const errorResponseSchema = {
     error: { type: "string" },
   },
 };
+const catalogSyncSchema = {
+  type: "object",
+  properties: {
+    status: { type: "string", enum: ["syncing", "ready", "failed"] },
+    startedAt: stringOrNullSchema,
+    completedAt: stringOrNullSchema,
+    pages: integerOrNullSchema,
+    upserted: integerOrNullSchema,
+    error: stringOrNullSchema,
+  },
+};
+const healthResponseSchema = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    catalogSync: {
+      anyOf: [
+        catalogSyncSchema,
+        { type: "null" },
+      ],
+    },
+  },
+};
+const catalogSyncPendingResponseSchema = {
+  type: "object",
+  properties: {
+    error: { type: "string" },
+    catalogSync: catalogSyncSchema,
+  },
+};
 const paginationQuerySchema = {
   type: "object",
   properties: {
     q: { type: "string", description: "Texto de búsqueda por título." },
+    limit: { type: "integer", minimum: 1, maximum: MAX_ANIME_LIMIT, default: DEFAULT_ANIME_LIMIT },
+    offset: { type: "integer", minimum: 0, default: 0 },
+  },
+};
+const suggestionQuerySchema = {
+  type: "object",
+  properties: {
     limit: { type: "integer", minimum: 1, maximum: MAX_ANIME_LIMIT, default: DEFAULT_ANIME_LIMIT },
     offset: { type: "integer", minimum: 0, default: 0 },
   },
@@ -205,6 +242,20 @@ const animeItemSchema = {
     malScore: numberOrNullSchema,
     provider: { type: "string" },
     providerId: { type: "string" },
+    matchCount: integerOrNullSchema,
+    matchingUsers: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          userId: { type: "string" },
+          displayName: { type: "string" },
+          status: stringOrNullSchema,
+          score: integerOrNullSchema,
+          episodesWatched: { type: "integer" },
+        },
+      },
+    },
   },
   additionalProperties: true,
 };
@@ -287,7 +338,10 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
   "GET /health": {
     tags: ["Sistema"],
     summary: "Comprueba que la API está levantada.",
-    response: { 200: okResponseSchema },
+    response: {
+      200: healthResponseSchema,
+      503: healthResponseSchema,
+    },
   },
   "GET /": {
     tags: ["Sistema", "MyAnimeList"],
