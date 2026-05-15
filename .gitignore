@@ -15,6 +15,7 @@ Unity/AnimeQuestBuildAndroid_BackUpThisFolder_ButDontShipItWithYourGame/
 Unity/Unity_BurstDebugInformation_DoNotShip/
 
 # Unity build artifacts
+*.zip
 *.apk
 *.aab
 *.symbols.zip
@@ -70,3 +71,7 @@ pnpm-debug.log*
 .DS_Store
 Thumbs.db
 desktop.ini
+Unity/Assets/Resources/PerformanceTestRunInfo.json
+Unity/Assets/Resources/PerformanceTestRunInfo.json.meta
+Unity/Assets/Resources/PerformanceTestRunSettings.json
+Unity/Assets/Resources/PerformanceTestRunSettings.json.meta

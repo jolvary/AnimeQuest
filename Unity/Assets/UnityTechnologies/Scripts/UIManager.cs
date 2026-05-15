@@ -1028,9 +1028,10 @@ public class UIManager : MonoBehaviour
         var moveControl = moveBase.AddComponent<MobileMoveTouchControl>();
         moveControl.Configure(playerInputs, moveKnob.GetComponent<RectTransform>(), 76f);
 
-        var lookPad = CreateTouchSurface("LookPad", _mobileControls.transform, new Vector2(1f, 0f), new Vector2(-178f, 156f), new Vector2(270f, 220f), new Color(0.12f, 0.07f, 0.03f, 0.10f));
+        var lookPad = CreateStretchTouchSurface("LookTouchArea", _mobileControls.transform, new Vector2(0.42f, 0f), Vector2.one, Vector2.zero, Vector2.zero, new Color(0f, 0f, 0f, 0.001f));
+        lookPad.transform.SetAsFirstSibling();
         var lookControl = lookPad.AddComponent<MobileLookTouchControl>();
-        lookControl.Configure(playerInputs, 0.12f);
+        lookControl.Configure(playerInputs, 0.72f);
 
         var jumpButton = CreateHoldButton("JumpButton", "J", new Vector2(1f, 0f), new Vector2(-104f, 222f), MobileHoldAction.Jump);
         jumpButton.transform.SetParent(_mobileControls.transform, false);
@@ -1089,6 +1090,25 @@ public class UIManager : MonoBehaviour
             image.sprite = GetMobileCircleSprite();
             image.type = Image.Type.Simple;
         }
+
+        return obj;
+    }
+
+    private GameObject CreateStretchTouchSurface(string name, Transform parent, Vector2 anchorMin, Vector2 anchorMax, Vector2 offsetMin, Vector2 offsetMax, Color color)
+    {
+        var obj = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        obj.transform.SetParent(parent, false);
+
+        var rect = obj.GetComponent<RectTransform>();
+        rect.anchorMin = anchorMin;
+        rect.anchorMax = anchorMax;
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.offsetMin = offsetMin;
+        rect.offsetMax = offsetMax;
+
+        var image = obj.GetComponent<Image>();
+        image.color = color;
+        image.raycastTarget = true;
 
         return obj;
     }
