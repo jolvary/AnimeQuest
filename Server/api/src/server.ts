@@ -423,22 +423,24 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
     summary: "Lista el catálogo global de anime con estado del usuario.",
     security: bearerSecurity,
     querystring: paginationQuerySchema,
-    response: { 200: animeListResponseSchema },
+    response: { 200: animeListResponseSchema, 401: errorResponseSchema, 503: catalogSyncPendingResponseSchema },
   },
   "GET /api/anime/genre/:genre": {
     tags: ["Anime"],
-    summary: "Lista anime del catalogo local filtrado por genero MAL.",
+    summary: "Lista anime del catalogo local filtrado por genero MAL y ordenado por puntuacion MAL.",
+    description: "Usado por NPCs de genero. Busca por titulo principal, ingles, japones, espanol o sinonimos, y ordena por mal_score descendente.",
     security: bearerSecurity,
     params: genreParamsSchema,
     querystring: paginationQuerySchema,
-    response: { 200: animeListResponseSchema },
+    response: { 200: animeListResponseSchema, 401: errorResponseSchema, 503: catalogSyncPendingResponseSchema },
   },
   "GET /api/anime/suggestions": {
-    tags: ["Anime"],
+    tags: ["Anime", "MyAnimeList", "Recomendaciones"],
     summary: "Lista sugerencias personalizadas de MyAnimeList para el usuario.",
+    description: "Proxy de /v2/anime/suggestions. Requiere una cuenta MAL vinculada y suficiente historial; el cliente muestra un mensaje especial en modo incognito.",
     security: bearerSecurity,
-    querystring: paginationQuerySchema,
-    response: { 200: animeListResponseSchema, 401: errorResponseSchema },
+    querystring: suggestionQuerySchema,
+    response: { 200: animeListResponseSchema, 401: errorResponseSchema, 500: errorResponseSchema, 503: catalogSyncPendingResponseSchema },
   },
   "GET /api/anime/:id/details": {
     tags: ["Anime"],
@@ -447,7 +449,9 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
     params: idParamsSchema,
     response: {
       200: animeItemSchema,
+      401: errorResponseSchema,
       404: errorResponseSchema,
+      503: catalogSyncPendingResponseSchema,
     },
   },
   "GET /api/anime/user": {
@@ -455,7 +459,7 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
     summary: "Lista el catálogo personal del usuario autenticado.",
     security: bearerSecurity,
     querystring: paginationQuerySchema,
-    response: { 200: animeListResponseSchema },
+    response: { 200: animeListResponseSchema, 401: errorResponseSchema, 503: catalogSyncPendingResponseSchema },
   },
   "GET /api/anime/matches": {
     tags: ["Anime", "Social"],
@@ -469,6 +473,8 @@ const swaggerRouteSchemas: Record<string, SwaggerRouteSchema> = {
           items: { type: "array", items: animeItemSchema },
         },
       },
+      401: errorResponseSchema,
+      503: catalogSyncPendingResponseSchema,
     },
   },
   "PATCH /api/anime/:id/watching": {
@@ -1415,6 +1421,25 @@ function buildDocumentedOpenApiPaths() {
   return paths;
 }
 
+function mergeOpenApiPaths(
+  documentedPaths: Record<string, Record<string, unknown>>,
+  generatedPaths: unknown
+) {
+  if (!isRecord(generatedPaths)) {
+    return documentedPaths;
+  }
+
+  const merged: Record<string, Record<string, unknown>> = { ...documentedPaths };
+  for (const [path, operations] of Object.entries(generatedPaths)) {
+    merged[path] = {
+      ...(merged[path] ?? {}),
+      ...(isRecord(operations) ? operations : {}),
+    };
+  }
+
+  return merged;
+}
+
 export function buildServer(ctx: AppContext) {
   const app = Fastify({
     logger: true,
@@ -1449,6 +1474,7 @@ export function buildServer(ctx: AppContext) {
         },
       ],
       tags: [
+        { name: "Recomendaciones", description: "Sugerencias personalizadas de anime para NPCs y paneles." },
         { name: "Sistema", description: "Estado de la API y raíz del servicio." },
         { name: "Cliente Unity", description: "Endpoints auxiliares usados por el cliente Unity." },
         { name: "Sesión", description: "Control de sesión activa y bloqueo de login duplicado." },
@@ -1478,13 +1504,9 @@ export function buildServer(ctx: AppContext) {
       }
 
       const { openapiObject } = documentObject;
-      if (Object.keys(openapiObject.paths ?? {}).length > 0) {
-        return openapiObject;
-      }
-
       return {
         ...openapiObject,
-        paths: buildDocumentedOpenApiPaths(),
+        paths: mergeOpenApiPaths(buildDocumentedOpenApiPaths(), openapiObject.paths),
       };
     },
   });
