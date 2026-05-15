@@ -49,7 +49,9 @@ public class NakamaFriendsPanelController : MonoBehaviour
             if (generation != _refreshGeneration) return;
             _allRows.Clear();
             ClearRows();
-            SetStatus("Log in to manage friends.");
+            SetStatus(IsIncognitoSessionActive()
+                ? "Log in with an account to see and manage friends."
+                : "Log in to manage friends.");
             SetInputsInteractable(false);
             return;
         }
@@ -664,7 +666,13 @@ public class NakamaFriendsPanelController : MonoBehaviour
     private static bool TryGetAuth(out NakamaAuthManager auth)
     {
         auth = NakamaAuthManager.Instance;
-        return auth != null && auth.IsAuthenticated && auth.Client != null && auth.Session != null;
+        return auth != null && auth.IsAuthenticated && !auth.IsIncognitoSession && auth.Client != null && auth.Session != null;
+    }
+
+    private static bool IsIncognitoSessionActive()
+    {
+        var auth = NakamaAuthManager.Instance;
+        return auth != null && auth.IsAuthenticated && auth.IsIncognitoSession;
     }
 
     private class FriendDisplayRow
