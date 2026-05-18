@@ -214,6 +214,23 @@ public class NakamaAuthManager : MonoBehaviour
         return await _socketConnectTask;
     }
 
+    public void MarkSocketDisconnected(string source)
+    {
+        if (Socket != null)
+        {
+            TryCloseSocketInBackground(Socket);
+        }
+
+        Socket = null;
+        _pendingSocket = null;
+        _socketConnectTask = null;
+        IsConnectionReady = false;
+        ClearSocketConnectDeadline();
+
+        string reason = string.IsNullOrWhiteSpace(source) ? "unknown" : source;
+        DozzleLogger.Error("Nakama socket marked disconnected", $"source={reason};endpoint={scheme}://{host}:{port}");
+    }
+
     private void StartSocketConnectInBackground(string source)
     {
         if (_socketConnectTask != null && !_socketConnectTask.IsCompleted)

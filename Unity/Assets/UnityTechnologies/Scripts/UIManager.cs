@@ -111,6 +111,7 @@ public class UIManager : MonoBehaviour
     {
         UpdateErrorAlert();
         FlushChatNotifications();
+        ClearVisibleChatChannelNotifications();
         MaintainWebGlPointerLockState();
         RefreshOverlayVisibility();
 
@@ -923,6 +924,28 @@ public class UIManager : MonoBehaviour
 
         _chatUnreadByChannel.Remove(key);
         RefreshChatNotificationBadge();
+    }
+
+    private void ClearVisibleChatChannelNotifications()
+    {
+        if (!IsChatPanelVisible() || chatPanelController == null)
+        {
+            return;
+        }
+
+        string key = NormalizeChatChannelKey(chatPanelController.CurrentChannelKey);
+        bool shouldRefresh = false;
+
+        lock (_chatNotificationLock)
+        {
+            shouldRefresh |= _pendingChatNotificationsByChannel.Remove(key);
+        }
+
+        shouldRefresh |= _chatUnreadByChannel.Remove(key);
+        if (shouldRefresh)
+        {
+            RefreshChatNotificationBadge();
+        }
     }
 
     private void EnsureChatNotificationBadge()

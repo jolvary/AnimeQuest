@@ -227,6 +227,7 @@ public class NakamaChatPanelController : MonoBehaviour
         }
         catch (Exception ex)
         {
+            MarkSocketDisconnectedIfNeeded(ex, "chat-notification-refresh");
             DozzleLogger.Error("Chat notification refresh failed", ex);
         }
         finally
@@ -252,6 +253,11 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
+        if (auth.Socket == null || !auth.IsConnectionReady)
+        {
+            return;
+        }
+
         var joinTask = auth.Socket.JoinChatAsync(target, type, persistence: true, hidden: hidden);
         var completed = await Task.WhenAny(joinTask, Task.Delay(ChatOperationTimeoutMilliseconds));
         if (completed != joinTask)
@@ -261,7 +267,17 @@ public class NakamaChatPanelController : MonoBehaviour
             return;
         }
 
-        var channel = await joinTask;
+        IChannel channel;
+        try
+        {
+            channel = await joinTask;
+        }
+        catch (Exception ex)
+        {
+            MarkSocketDisconnectedIfNeeded(ex, $"chat-notification-join:{channelKey}");
+            throw;
+        }
+
         _joinedNotificationChannelKeys.Add(channelKey);
         DozzleLogger.Action("Chat notification channel joined", $"channel={ShortChannel(channel?.Id)};key={channelKey};type={type};target={target}");
     }
@@ -374,6 +390,7 @@ public class NakamaChatPanelController : MonoBehaviour
             _activeChannelKey = null;
             SetStatus("Chat unavailable.");
             RefreshSendState();
+            MarkSocketDisconnectedIfNeeded(ex, "chat-channel-join");
             DozzleLogger.Error("Chat channel join failed", ex);
         }
         finally
@@ -516,6 +533,7 @@ public class NakamaChatPanelController : MonoBehaviour
         catch (Exception ex)
         {
             SetStatus("Message failed.");
+            MarkSocketDisconnectedIfNeeded(ex, "chat-message-send");
             DozzleLogger.Error("Chat message send failed", ex);
         }
         finally
@@ -1037,6 +1055,28 @@ public class NakamaChatPanelController : MonoBehaviour
     {
         auth = NakamaAuthManager.Instance;
         return auth != null && auth.IsAuthenticated && auth.Client != null && auth.Session != null;
+    }
+
+    private static void MarkSocketDisconnectedIfNeeded(Exception ex, string source)
+    {
+        if (!IsSocketDisconnectedException(ex)) return;
+        NakamaAuthManager.Instance?.MarkSocketDisconnected(source);
+    }
+
+    private static bool IsSocketDisconnectedException(Exception ex)
+    {
+        while (ex != null)
+        {
+            if (!string.IsNullOrWhiteSpace(ex.Message) &&
+                ex.Message.IndexOf("socket not connected", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            ex = ex.InnerException;
+        }
+
+        return false;
     }
 
     private static string NormalizeChannelName(string value, string fallback)

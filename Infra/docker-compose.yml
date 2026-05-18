@@ -38,7 +38,7 @@ services:
       - "6379:6379"
 
   nakama:
-    image: heroiclabs/nakama:3.22.0
+    image: heroiclabs/nakama:3.26.0
     depends_on:
       nakama-db:
         condition: service_healthy

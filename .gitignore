@@ -77,3 +77,5 @@ Unity/Assets/Resources/PerformanceTestRunSettings.json
 Unity/Assets/Resources/PerformanceTestRunSettings.json.meta
 
 AnimeQuest_Entrega
+*.docx
+*.pptx
